@@ -1,0 +1,135 @@
+:root {
+  /* 背景层级 */
+  --bg-space: #0a0e15;
+  --bg-panel: #111823;
+  --bg-panel-2: #0d1420;
+  --bg-elevated: #17202e;
+  --bg-inset: #0b1119;
+
+  /* 描边 */
+  --border-subtle: #1e2836;
+  --border-strong: #2a3648;
+
+  /* 文字 */
+  --text-primary: #e7edf5;
+  --text-secondary: #9fb0c3;
+  --text-muted: #61728a;
+
+  /* 强调 / 语义色 —— A股习惯：涨红 跌绿 */
+  --accent: #19d19f;
+  --accent-dim: rgba(25, 209, 159, 0.14);
+  --up: #ff5b5b;
+  --up-dim: rgba(255, 91, 91, 0.14);
+  --down: #22c07a;
+  --down-dim: rgba(34, 192, 122, 0.14);
+  --blue: #3f8cff;
+  --blue-dim: rgba(63, 140, 255, 0.16);
+  --amber: #f5b544;
+  --violet: #9d7bff;
+
+  /* 圆角 */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 10px;
+
+  /* 字体 */
+  --font-display: "Chakra Petch", "Noto Sans SC", sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", monospace;
+  --font-sans: "Noto Sans SC", "Chakra Petch", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 600px at 15% -10%, rgba(25, 209, 159, 0.06), transparent 60%),
+    radial-gradient(1000px 500px at 100% 0%, rgba(63, 140, 255, 0.05), transparent 55%),
+    var(--bg-space);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-synthesis: none;
+}
+
+/* 网格纹理叠层 */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(circle at 50% 0%, black, transparent 85%);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a4a60;
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.font-display {
+  font-family: var(--font-display);
+}
+
+/* 动画关键帧 */
+@keyframes rise-up {
+  from {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
+.pulse-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+@keyframes scan {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(200%);
+  }
+}

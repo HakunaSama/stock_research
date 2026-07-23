@@ -1,92 +1,142 @@
-# autoresearch
+# autoresearch · Stock Research Agent + Terminal
 
-![teaser](progress.png)
+> 一个**自主股票研究**的全栈实验：纯 Python 的多智能体研究引擎 + 一个深色系量化决策终端前端。
+> 底座沿用了 [@karpathy 的 autoresearch](#-appendix-the-original-autoresearch-llm-training-playground) 自主研究理念，把它从"AI 自己训练 LLM"迁移到"AI 自己做投研"。
 
-*One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
+<p align="center">
+  <img src="https://copilot-cn.bytedance.net/api/ide/v1/text_to_image?prompt=dark%20themed%20quantitative%20trading%20terminal%20dashboard%2C%20candlestick%20chart%20with%20red%20and%20green%20candles%2C%20moving%20average%20lines%2C%20volume%20bars%2C%20research%20panel%20with%20score%20gauges%2C%20cyberpunk%20fintech%20UI%2C%20deep%20navy%20background%2C%20neon%20accents%2C%20highly%20detailed%2C%20professional%20product%20screenshot&image_size=landscape_16_9" alt="Stock Terminal preview" width="82%" />
+</p>
 
-The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069) and [this tweet](https://x.com/karpathy/status/2031135152349524125).
+<p align="center">
+  <img src="https://img.shields.io/badge/backend-pure%20Python-3776AB?logo=python&logoColor=white" alt="python" />
+  <img src="https://img.shields.io/badge/frontend-React%20%2B%20TS%20%2B%20Vite-61DAFB?logo=react&logoColor=black" alt="react" />
+  <img src="https://img.shields.io/badge/deps-stdlib%20%2B%20requests-brightgreen" alt="deps" />
+  <img src="https://img.shields.io/badge/K--line-real%20A--share%20OHLCV-ff5b5b" alt="kline" />
+</p>
 
-## How it works
+---
 
-The repo is deliberately kept small and only really has three files that matter:
+## ✨ 这是什么
 
-- **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
-- **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
-- **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
+给一个 AI 智能体一套**真实但小巧的投研工作流**，让它自己跑：读策略 → 联网做深度研究 → 拉真实 K 线提技术特征 → 六阶段分析 → 出带评分、可回溯的投资结论。整套后端**零重依赖**（标准库 + `requests`），前端是一个**手绘 SVG、零图表库**的量化决策终端。
 
-By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
+| 你会得到 | 说明 |
+|---|---|
+| 🧠 **多智能体研究引擎** | langchain-ai/open_deep_research 的纯 Python 复刻：生产者产出研究，独立裁判打分，低分**整体重跑**（无反馈重试，最多 8 次） |
+| 📈 **真实 K 线 + 技术特征** | 通过 vendored `stocksdk` 拉 A 股真实 OHLCV，纯 Python 算 MA / RSI / MACD / 关键价位 / 量比 / 蜡烛形态 |
+| 🎛️ **量化决策终端前端** | React + TS + Vite，深色主题、A 股涨红跌绿、手绘蜡烛图、ODR 研究面板、评分闭环时间线 |
+| 🔌 **前后端真实对接** | 极简 stdlib HTTP bridge 暴露 `context.json` / K 线；前端渐进增强——后端在则"实时"，断开则回退"离线 mock"不崩 |
 
-If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/status/2030720614752039185) looks pretty good for a lot more context.
+---
 
-## Quick start
+## 🗂️ 仓库结构
 
-**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
+```
+autoresearch/
+├── stock-research-agent/     # 后端：纯 Python 投研智能体
+│   ├── stock_agent/          #   策略热插拔 · K线特征 · ODR 研究引擎 · 6阶段分析
+│   ├── vendor/stocksdk/      #   vendored 的 A股行情 SDK（见 vendor/NOTICE.md）
+│   ├── hermes_tools/         #   hermes 框架工具封装（standalone 时为 no-op）
+│   ├── serve.py              #   stdlib HTTP bridge：暴露 run 的 context / K线
+│   └── seed_runs.py          #   产出两只股票的样例 run（含真实 K线）
+├── stock-terminal/           # 前端：React + TS + Vite 量化决策终端
+│   └── src/                  #   蜡烛图 · 特征卡 · ODR 研究面板 · api 适配层
+├── docs/                     # 设计文档
+└── (train.py / prepare.py / program.md ...)  # ↓ 原 karpathy autoresearch 训练底座
+```
+
+---
+
+## 🚀 快速开始
+
+### 1) 后端：跑一次完整投研（无需 API key）
 
 ```bash
-
-# 1. Install uv project manager (if you don't already have it)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Install dependencies
-uv sync
-
-# 3. Download data and train tokenizer (one-time, ~2 min)
-uv run prepare.py
-
-# 4. Manually run a single training experiment (~5 min)
-uv run train.py
+cd stock-research-agent
+python3 run_demo.py
 ```
 
-If the above commands all work ok, your setup is working and you can go into autonomous research mode.
+用确定性的 `FakeLLM`（不联网、不需要 key）跑完整条 pipeline，打印结论 + 风险块 + 质量评分。
 
-## Running the agent
+### 2) 前后端联动 demo（真实 K 线 + 离线回退）
 
-Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
+```bash
+# 后端：产出样例 run 并起 bridge
+cd stock-research-agent
+python3 seed_runs.py /tmp/stock-terminal-data     # 000100 / 002185，含真实日K
+python3 serve.py --workdir /tmp/stock-terminal-data --port 8787
 
-```
-Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
-```
-
-The `program.md` file is essentially a super lightweight "skill".
-
-## Project structure
-
-```
-prepare.py      — constants, data prep + runtime utilities (do not modify)
-train.py        — model, optimizer, training loop (agent modifies this)
-program.md      — agent instructions
-pyproject.toml  — dependencies
+# 前端：另开一个终端
+cd stock-terminal
+pnpm install        # 或 npm install
+pnpm dev            # http://localhost:5199
 ```
 
-## Design choices
+打开个股卡的「研究过程」抽屉即可看到真实蜡烛图 + 技术特征卡。**把 bridge 停掉刷新**，抽屉会自动打上黄色「离线 mock」徽标并用离线合成数据继续渲染——优雅降级。
 
-- **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
-- **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
-- **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
+---
 
-## Platform support
+## 🧩 后端四大模块
 
-This code currently requires that you have a single NVIDIA GPU. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
+线程一个 `ResearchContext` 贯穿始终，落盘到 `~/.hermes/stock/<run_id>/`。
 
-Seeing as there seems to be a lot of interest in tinkering with autoresearch on much smaller compute platforms than an H100, a few extra words. If you're going to try running autoresearch on smaller computers (Macbooks etc.), I'd recommend one of the forks below. On top of this, here are some recommendations for how to tune the defaults for much smaller models for aspiring forks:
+| # | 模块 | 代码 | 做什么 |
+|---|---|---|---|
+| 1 | 策略热插拔 | `stock_agent/strategy.py` | 把裸策略（文本或本地 `strategy.md`）编译成严格 schema + 逐条规则的 prompt 块（仅本地文件，不抓 URL/Git） |
+| 2 | K 线特征 | `stock_agent/kline.py` + `kline_features.py` | 拉真实 A 股 OHLCV，提六个技术特征（趋势/均线/关键价位/形态/量能/指标），离线时优雅退回 placeholder |
+| 3 | 深度研究 | `stock_agent/research.py` + `odr/` | 生产者产研究，独立裁判打分：≥阈值接受，否则**整体无反馈重跑**（默认 ODR 多智能体引擎） |
+| 4 | 分析（核心） | `stock_agent/analysis.py` | **6 阶段**：基本面→技术面→策略契合→综合定线→结论→风险&执行；事实阶段自校验重试，终裁把关 S4-S6 |
 
-1. To get half-decent results I'd use a dataset with a lot less entropy, e.g. this [TinyStories dataset](https://huggingface.co/datasets/karpathy/tinystories-gpt4-clean). These are GPT-4 generated short stories. Because the data is a lot narrower in scope, you will see reasonable results with a lot smaller models (if you try to sample from them after training).
-2. You might experiment with decreasing `vocab_size`, e.g. from 8192 down to 4096, 2048, 1024, or even - simply byte-level tokenizer with 256 possibly bytes after utf-8 encoding.
-3. In `prepare.py`, you'll want to lower `MAX_SEQ_LEN` a lot, depending on the computer even down to 256 etc. As you lower `MAX_SEQ_LEN`, you may want to experiment with increasing `DEVICE_BATCH_SIZE` in `train.py` slightly to compensate. The number of tokens per fwd/bwd pass is the product of these two.
-4. Also in `prepare.py`, you'll want to decrease `EVAL_TOKENS` so that your validation loss is evaluated on a lot less data.
-5. In `train.py`, the primary single knob that controls model complexity is the `DEPTH` (default 8, here). A lot of variables are just functions of this, so e.g. lower it down to e.g. 4.
-6. You'll want to most likely use `WINDOW_PATTERN` of just "L", because "SSSL" uses alternating banded attention pattern that may be very inefficient for you. Try it.
-7. You'll want to lower `TOTAL_BATCH_SIZE` a lot, but keep it powers of 2, e.g. down to `2**14` (~16K) or so even, hard to tell.
+> 完整设计见 [`docs/stock-research-agent-design.md`](docs/stock-research-agent-design.md)。
 
-I think these would be the reasonable hyperparameters to play with. Ask your favorite coding agent for help and copy paste them this guide, as well as the full source code.
+---
 
-## Notable forks
+## 📈 K 线数据源（真实 OHLCV）
 
-- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)
-- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) (MacOS)
-- [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
-- [andyluo7/autoresearch](https://github.com/andyluo7/autoresearch) (AMD)
+[`stock_agent/kline.py`](stock-research-agent/stock_agent/kline.py) 通过 **vendored 的 `stocksdk`**（腾讯/东财/新浪多源自动故障转移，仅依赖 `requests`）拉真实 A 股 OHLCV，[`kline_features.py`](stock-research-agent/stock_agent/kline_features.py) 把 K 线算成六个技术特征写进 `ctx.kline`。全链路优雅降级：拉取失败（离线 / 非 A 股代码）或 `config.kline.enabled=False` 时，槽位保持 `placeholder`、特征全 null，**其它模块零改动**。
 
-## License
+> ⚠️ `vendor/stocksdk` 是第三方代码，来源与许可见 [`stock-research-agent/vendor/NOTICE.md`](stock-research-agent/vendor/NOTICE.md)。上游仓库未声明开源协议，公开分发前请先获授权或替换实现。
 
-MIT
+---
+
+## 🎨 前端亮点
+
+- **零图表依赖**：蜡烛图、均线、成交量柱、支撑/压力标线全部手绘 SVG。
+- **A 股配色**：涨红跌绿，深色量化终端风。
+- **渐进增强**：`src/lib/api.ts` 优先连后端 bridge（实时），超时/失败自动回退本地 mock 并标注「离线 mock」，离线也能完整演示。
+- **可回溯**：ODR 研究面板展示子研究、评分闭环时间线、重试历史。
+
+用 `VITE_RESEARCH_API` 指向别的 bridge 地址。
+
+---
+
+## 📎 Appendix — the original `autoresearch` (LLM training playground)
+
+本仓库的底座是 [@karpathy](https://x.com/karpathy/status/2029701092347630069) 的 **autoresearch**：给 AI 智能体一套小而真实的 LLM 训练环境，让它整夜自主实验——改代码、训 5 分钟、看指标是否变好、保留或丢弃、循环往复。核心思路是你不直接改 Python，而是编写 `program.md` 这类 Markdown"研究组织程序"来给智能体提供上下文。
+
+保留下来的相关文件：
+
+```
+prepare.py      — 常量、数据准备 + 运行时工具（不修改）
+train.py        — 模型、优化器、训练循环（智能体修改此文件）
+program.md      — 智能体指令
+pyproject.toml  — 依赖
+```
+
+**Quick start（训练底座）**：需要单张 NVIDIA GPU（在 H100 上测试）、Python 3.10+、[uv](https://docs.astral.sh/uv/)。
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # 安装 uv
+uv sync                                           # 装依赖
+uv run prepare.py                                 # 一次性下数据 + 训 tokenizer
+uv run train.py                                   # 跑一次 5 分钟训练实验
+```
+
+指标是 **val_bpb**（越低越好）。更多背景与调小模型的建议参见原项目说明与 [nanochat](https://github.com/karpathy/nanochat)。
+
+---
+
+## 📄 License
+
+- 训练底座（`train.py` / `prepare.py` / `program.md` 等）沿用原 autoresearch 的 **MIT** 许可。
+- `stock-research-agent/vendor/stocksdk` 为第三方代码，许可状态见其 `NOTICE.md`——**再分发前需单独确认**。
