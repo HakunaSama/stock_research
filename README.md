@@ -26,6 +26,7 @@
 | 📈 **真实 K 线 + 技术特征** | 通过 vendored `stocksdk` 拉 A 股真实 OHLCV，纯 Python 算 MA / RSI / MACD / 关键价位 / 量比 / 蜡烛形态 |
 | 🎛️ **量化决策终端前端** | React + TS + Vite，深色主题、A 股涨红跌绿、手绘蜡烛图、ODR 研究面板、评分闭环时间线 |
 | 🔌 **前后端真实对接** | 极简 stdlib HTTP bridge 暴露 `context.json` / K 线；前端渐进增强——后端在则"实时"，断开则回退"离线 mock"不崩 |
+| 🤖 **可插拔真实大模型** | 一个 `urllib` 写的 OpenAI 兼容适配器，换 `.env` 三个值即可驱动火山方舟 / OpenAI / DeepSeek / 通义 等；`FakeLLM` 仍可零 key 离线跑 |
 
 ---
 
@@ -38,6 +39,9 @@ autoresearch/
 │   ├── vendor/stocksdk/      #   vendored 的 A股行情 SDK（见 vendor/NOTICE.md）
 │   ├── hermes_tools/         #   hermes 框架工具封装（standalone 时为 no-op）
 │   ├── serve.py              #   stdlib HTTP bridge：暴露 run 的 context / K线
+│   ├── run_demo.py           #   FakeLLM 离线跑通全流程（无需 key）
+│   ├── run_live.py           #   真实大模型跑全流程（读 .env）
+│   ├── .env.example          #   大模型端点配置模板（火山方舟/OpenAI/DeepSeek...）
 │   └── seed_runs.py          #   产出两只股票的样例 run（含真实 K线）
 ├── stock-terminal/           # 前端：React + TS + Vite 量化决策终端
 │   └── src/                  #   蜡烛图 · 特征卡 · ODR 研究面板 · api 适配层
@@ -73,6 +77,30 @@ pnpm dev            # http://localhost:5199
 ```
 
 打开个股卡的「研究过程」抽屉即可看到真实蜡烛图 + 技术特征卡。**把 bridge 停掉刷新**，抽屉会自动打上黄色「离线 mock」徽标并用离线合成数据继续渲染——优雅降级。
+
+### 3) 接真实大模型跑全流程（可选）
+
+`run_demo.py` 用的是确定性 `FakeLLM`（不联网）。想让**真实大模型**驱动整条链路（策略编译 → ODR 深度研究 → 真实 K 线 → 六阶段分析），用 [`run_live.py`](stock-research-agent/run_live.py)：
+
+```bash
+cd stock-research-agent
+cp .env.example .env        # 然后填入 base_url / api_key / model（.env 已被 .gitignore 忽略）
+python3 run_live.py                       # 默认标的 600519 贵州茅台
+python3 run_live.py 000100 "华星光电 1-3 个月是否值得布局？"
+```
+
+适配器 [`stock_agent/live_llm.py`](stock-research-agent/stock_agent/live_llm.py) 只讲 OpenAI 标准的 `/chat/completions`，用标准库 `urllib` 发请求（**零重依赖**），因此**任何 OpenAI 兼容端点**都能用——换 `.env` 里三个值即可切换：
+
+| 提供商 | `STOCK_LLM_BASE_URL` | `STOCK_LLM_MODEL` |
+|---|---|---|
+| 火山方舟 / Ark | `https://ark.cn-beijing.volces.com/api/v3` | `ep-xxxx`（推理接入点）或 `doubao-...` |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
+| Moonshot | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` |
+
+> 🔑 **凭据只从环境变量 / 本地 `.env` 读取，绝不写进代码**。`.env` 已被 `.gitignore` 挡住，不会被提交。
+> ⏱️ 推理型模型（带思维链）单次响应较慢，`run_live.py` 已调小 ODR 并行度/轮数让首次跑通更快；想更快可换非推理的快模型或继续调低这些值。
 
 ---
 

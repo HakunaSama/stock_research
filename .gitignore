@@ -21,3 +21,24 @@ dev/
 
 # Results file
 results.tsv
+
+# Secrets / credentials — NEVER commit real API keys
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.json
+credentials.json
+
+# Node / frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
