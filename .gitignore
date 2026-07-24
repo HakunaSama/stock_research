@@ -31,6 +31,11 @@ results.tsv
 secrets.json
 credentials.json
 
+# SQLite (user DB, sessions, jobs) — runtime state, never commit
+*.db
+*.db-wal
+*.db-shm
+
 # Node / frontend
 node_modules/
 dist/

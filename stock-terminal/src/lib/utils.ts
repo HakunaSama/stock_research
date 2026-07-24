@@ -25,3 +25,14 @@ export function signNum(v: number, digits = 2): string {
 export function fmtMoney(v: number): string {
   return v.toLocaleString("zh-CN");
 }
+
+// 整数分 → "¥12.34" 人民币展示。金额在后端统一用整数分,避免浮点误差。
+export function fmtCents(cents: number): string {
+  return `¥${(cents / 100).toFixed(2)}`;
+}
+
+// Unix 秒时间戳 → 本地日期时间字符串。
+export function fmtTs(ts: number | null | undefined): string {
+  if (!ts) return "-";
+  return new Date(ts * 1000).toLocaleString("zh-CN", { hour12: false });
+}

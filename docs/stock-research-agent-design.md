@@ -1,6 +1,6 @@
 # 股市调研智能体 —— 基于 Hermes Agent 的改造设计
 
-> 状态：**架构设计 v0.3**，关键决策已锁定（见 §8）。DeepResearch 生产者已升级为 ODR 多 agent 引擎（见 §5.5）。
+> 状态：**架构设计 v0.4**，关键决策已锁定（见 §8）。DeepResearch 生产者已升级为 ODR 多 agent 引擎（见 §5.5）。已完成**产品化**：网站 + 用户系统 + 点数计费/充值 + 后台管理 + Docker 部署（见 §9）。
 > 底座框架：Nous Research [hermes-agent](https://github.com/nousresearch/hermes-agent)（MIT，Python，本地已参考 clone 于 `/tmp/hermes-agent-ref`）。
 > 参考项目：(1) 本仓库 autoresearch（Karpathy 的自主实验循环），借鉴其"打分—重试"闭环；(2) [langchain-ai/open_deep_research](https://github.com/langchain-ai/open_deep_research)，DeepResearch 生产者对齐其多 agent 做法（纯 Python 移植，见 §5.5）。
 
@@ -394,6 +394,61 @@ docs/stock-research-agent-design.md      # 本文档
 4. **K线**：本期只留 placeholder，接口先定死，等文档再接真实数据源。
 
 **实现顺序**：`ResearchContext`（`stock_context.py`）→ 策略编译（`stock_strategy.py`）→ DeepResearch 闭环（`stock_research.py`）→ K线 stub（`stock_kline.py`）→ 分析 6 阶段 pipeline（`stock_analysis.py` + `analysis/prompts/S1..S6`）→ 编排 skill（`stock-research-orchestrator`）→ 注册 `stock` toolset。
+
+---
+
+## 9. 产品化层：网站 + 计费 + 后台（v0.4 新增）
+
+把上面的调研引擎包装成一个**可对外售卖的网站**：用户注册登录 → 每天有免费额度 → 免费用完后**用点数付费**发起深度研究 → 管理员在后台运营。整套跑在 Docker Compose（nginx + FastAPI，SQLite 持久化），部署见 [DEPLOY.md](file:///Users/bytedance/Desktop/autoresearch/autoresearch/DEPLOY.md)。
+
+### 9.1 计费模型：点数预付 + 每日免费额度
+
+调研过 SaaS 的几种主流做法后（纯订阅 / 纯按量 / 预付点数），选**点数预付制**而非纯订阅：
+
+- **扣点与 token 成本 1:1 对应，永不被烧穿**。纯订阅（"每月 X 元不限量"）在 LLM 成本按 token 计费时，重度用户会把利润吃穿。
+- **月卡只做营销包装**：底层仍是点数，月卡 = "每月到账 N 点"，用户心智友好，风控仍落在点数上。
+- 每天前 `RESEARCH_DAILY_QUOTA` 次**免费**（获客/留存），用完后每次扣 `RESEARCH_CREDIT_COST` 点；余额不足拒绝（HTTP 402）。
+- **金额一律整数分、点数一律整数，绝不用浮点**。
+
+### 9.2 数据模型（3 张新表 + jobs 扩列）
+
+- `credit_accounts`：每用户余额快照（`balance`/`total_topup`/`total_spent`）。
+- `credit_ledger`：**只增不改不删的流水账**，单一真相来源，`余额 == SUM(ledger.amount)` 可对账。
+- `orders`：充值订单，`out_trade_no` UNIQUE。
+- `research_jobs` 加列 `credits_cost`/`charged_credits`/`refunded`，把每次研究与扣点绑定。
+
+### 9.3 三个一致性要点（SQLite 上做对）
+
+1. **支付回调幂等**：`mark_order_paid` 用 `status='pending'` 的 **CAS 更新**，重复回调 rowcount==0 → 不重复加点。真实渠道异步回调靠这个防重复到账。
+2. **扣费防超扣**：`spend_credits` 用 `WHERE balance >= ?` 条件更新，余额不足则影响 0 行 → 返回失败，不会扣成负数。
+3. **退点幂等**：`refund_job` 用 `refunded 0→1` 的 CAS，防止 worker 崩溃重入队导致重复退点。
+
+### 9.4 计费规则接线
+
+- **免费额度 + 点数叠加**：`enqueue` 先数当天免费 job（`count_free_jobs_since`，charged_credits=0 且非 failed），没超额度就免费入队；超了就 `spend_credits(cost)`，返回 None 则抛 `InsufficientCredits`（→402）。
+- **系统侧失败自动退点**：worker `_process` 的失败分支调 `_refund_failed_job`（LLM/基础设施错误退点；用户侧原因不退）。
+
+### 9.5 可插拔支付（PaymentProvider seam）
+
+抽象基类 `PaymentProvider`（`create_payment` / `verify_callback`）+ 默认 `StubProvider`（占位，下单即模拟支付成功）。接真实渠道（个人无照推荐**虎皮椒 xunhupay**，有资质用**支付宝当面付**）只需实现接口、注册进 `_PROVIDERS`、改 `PAYMENT_PROVIDER` 环境变量，**路由与 DB 不动**。
+
+### 9.6 后台管理（复用 is_admin，同进程）
+
+`require_admin` 依赖复用现有 `users.is_admin`（**第一个注册的账号即 admin**），后台 API 集成进同一个 FastAPI app（单机轻量服务，独立 admin 服务属过度设计）。前端 `/admin` 路由加管理员守卫，含四个 Tab：概览统计 / 用户管理（含手动充值扣减）/ 订单查询 / 流水查询。
+
+### 9.7 产品化层文件清单
+
+后端 `stock-research-agent/webapp/`：
+- [db.py](file:///Users/bytedance/Desktop/autoresearch/autoresearch/stock-research-agent/webapp/db.py)：数据层（schema + 迁移 + 计费/订单/admin 函数）。
+- [billing.py](file:///Users/bytedance/Desktop/autoresearch/autoresearch/stock-research-agent/webapp/billing.py)：套餐 `PLANS`、计费常量、可插拔支付。
+- [jobs.py](file:///Users/bytedance/Desktop/autoresearch/autoresearch/stock-research-agent/webapp/jobs.py)：研究任务队列 + 扣费/退点接线。
+- [admin.py](file:///Users/bytedance/Desktop/autoresearch/autoresearch/stock-research-agent/webapp/admin.py)：后台管理 API。
+- [auth.py](file:///Users/bytedance/Desktop/autoresearch/autoresearch/stock-research-agent/webapp/auth.py) / [app.py](file:///Users/bytedance/Desktop/autoresearch/autoresearch/stock-research-agent/webapp/app.py)：鉴权 + 路由汇总（钱包/订单/config 端点）。
+
+前端 `stock-terminal/src/`：
+- [lib/auth.ts](file:///Users/bytedance/Desktop/autoresearch/autoresearch/stock-terminal/src/lib/auth.ts)：全部 API 客户端（鉴权 + 钱包 + 充值 + 后台）。
+- [pages/Billing.tsx](file:///Users/bytedance/Desktop/autoresearch/autoresearch/stock-terminal/src/pages/Billing.tsx)：充值页。
+- [pages/Admin.tsx](file:///Users/bytedance/Desktop/autoresearch/autoresearch/stock-terminal/src/pages/Admin.tsx)：后台管理页。
 
 ---
 

@@ -1,7 +1,11 @@
 import type { WatchItem } from "@/types/analysis";
 
-// 主板复选池 —— 右侧栏 18 只候选（红涨绿跌由 changePct 决定）
+// 候选池 —— 右侧栏候选股（红涨绿跌由 changePct 决定），按评分排序。
+// 前两只（000100 / 002185）已完成深度研究，与中间主卡同源（见 data/stocks.ts），
+// 点击可直接打开研究抽屉；其余为纯展示 mock，点击仅选中并在主区显示精简候选卡。
 export const watchlist: WatchItem[] = [
+  { code: "000100", name: "TCL科技", price: 4.95, changePct: 4.64, marketCap: "930亿", score: 82, note: "面板涨价，放量突破，机构增持" },
+  { code: "002185", name: "华天科技", price: 12.86, changePct: 0.94, marketCap: "410亿", score: 71, note: "先进封装，缩量回踩，题材催化" },
   { code: "600030", name: "中信证券", price: 26.84, changePct: 2.14, marketCap: "3980亿", score: 100, note: "券商龙头，牛市旗手，成交放量" },
   { code: "002202", name: "金风科技", price: 9.72, changePct: 1.46, marketCap: "410亿", score: 96, note: "风电装机高增，海风订单饱满" },
   { code: "600707", name: "彩虹股份", price: 7.85, changePct: 3.02, marketCap: "285亿", score: 94, note: "面板涨价受益，业绩弹性大" },

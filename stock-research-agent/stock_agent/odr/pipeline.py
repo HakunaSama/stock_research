@@ -74,7 +74,9 @@ class OpenDeepResearcher:
     """
 
     llm: LLMClient
-    config: StockConfig = DEFAULT_CONFIG
+    # Python 3.11+ forbids a mutable dataclass instance as a field default;
+    # default_factory yields the same shared DEFAULT_CONFIG the old code used.
+    config: StockConfig = field(default_factory=lambda: DEFAULT_CONFIG)
     retriever: Optional[Retriever] = None
     last_result: Optional[ODRResult] = field(default=None, repr=False)
 

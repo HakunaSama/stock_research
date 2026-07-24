@@ -20,9 +20,10 @@ import type {
   KlineFeatures,
 } from "@/types/analysis";
 
-// 后端地址可通过 Vite 环境变量覆盖(VITE_RESEARCH_API);默认打本地 bridge。
-const API_BASE: string =
-  (import.meta.env.VITE_RESEARCH_API as string | undefined) ?? "http://127.0.0.1:8787";
+// 后端地址:生产环境走同源(nginx 把 /api 反代到后端),故默认空串即同源。
+// 本地 dev 前后端分离时,用 VITE_RESEARCH_API 指向后端(如 http://127.0.0.1:8000)。
+export const API_BASE: string =
+  (import.meta.env.VITE_RESEARCH_API as string | undefined) ?? "";
 
 // 后端 research 槽的原始形状(容错:字段可能缺失)。
 interface RawResearch {
@@ -137,6 +138,7 @@ export async function fetchResearchRun(
   try {
     const res = await fetch(`${API_BASE}/api/research/${encodeURIComponent(target)}`, {
       signal: ctrl.signal,
+      credentials: "include",
     });
     if (!res.ok) return null;
     const raw = (await res.json()) as RawResearch;
@@ -207,6 +209,7 @@ export async function fetchKline(
   try {
     const res = await fetch(`${API_BASE}/api/kline/${encodeURIComponent(target)}`, {
       signal: ctrl.signal,
+      credentials: "include",
     });
     if (!res.ok) return null;
     const raw = (await res.json()) as RawKline;

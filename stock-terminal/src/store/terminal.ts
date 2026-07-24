@@ -1,6 +1,9 @@
 import { create } from "zustand";
 import { stocks } from "@/data/stocks";
 
+// 已完成深度研究的股票 id 集合（当前由本地 stocks 数据决定；接后端后可动态填充）。
+export const researchedIds = new Set(stocks.map((s) => s.id));
+
 interface TerminalState {
   selectedId: string;
   select: (id: string) => void;

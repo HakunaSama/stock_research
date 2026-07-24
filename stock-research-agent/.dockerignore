@@ -1,0 +1,12 @@
+# Keep the backend image lean and free of secrets.
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
