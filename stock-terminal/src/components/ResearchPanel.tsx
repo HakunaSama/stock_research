@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { Drawer } from "antd";
 import {
-  X,
   FlaskConical,
   FileText,
   ListTree,
@@ -15,11 +14,9 @@ import {
   Loader2,
   CandlestickChart,
 } from "lucide-react";
-import { researchRuns } from "@/data/research";
-import { klineRuns } from "@/data/kline";
-import { stocks } from "@/data/stocks";
-import { useTerminal } from "@/store/terminal";
+import { useMarket } from "@/store/market";
 import { fetchResearchRun, fetchKline } from "@/lib/api";
+import { fetchLiveKline } from "@/lib/market";
 import type { ResearchRun, KlineData } from "@/types/analysis";
 import RetryTimeline from "./RetryTimeline";
 import SubFindingCard from "./SubFindingCard";
@@ -38,20 +35,23 @@ function SectionHead({ icon, title, hint }: { icon: React.ReactNode; title: stri
   );
 }
 
-type Source = "loading" | "live" | "offline";
+type Source = "loading" | "live" | "missing";
 
 // ODR 研究过程抽屉 —— 从右侧滑入,完整回放一只股票的多智能体深研过程:
-// 顶栏(引擎/最终分/状态)→ 研究简报 → 子问题拆解 → 子研究卡(含反思/来源)
+// 顶栏(引擎/最终分/状态)→ 技术面K线 → 研究简报 → 子问题拆解 → 子研究卡
 // → 压缩笔记 → 最终报告摘要 → 评分·重跑闭环时间线。
 //
-// 数据来源渐进增强:打开时先向后端 bridge (serve.py) 拉真实 context.json;
-// 拉到就用真实数据(标「实时」),拉不到回退本地 mock(标「离线」)。
+// 数据全部来自后端真实产物(context.json);研究运行时留存的 K 线缺失时,
+// 回退到实时行情源拉取,保证图表始终是真实 OHLCV。
 export default function ResearchPanel() {
-  const { researchOpenId, closeResearch } = useTerminal();
+  const { researchOpenCode, closeResearch, quotes, watchlist } = useMarket();
+  const researchOpenId = researchOpenCode;
   const open = researchOpenId != null;
-  const stock = researchOpenId ? stocks.find((s) => s.id === researchOpenId) : undefined;
-  const mock = researchOpenId ? researchRuns[researchOpenId] : undefined;
-  const klineMock = researchOpenId ? klineRuns[researchOpenId] : undefined;
+  const stockName = researchOpenId
+    ? quotes[researchOpenId]?.name ??
+      watchlist.find((w) => w.code === researchOpenId)?.name ??
+      researchOpenId
+    : "";
 
   const [run, setRun] = useState<ResearchRun | undefined>(undefined);
   const [source, setSource] = useState<Source>("loading");
@@ -65,98 +65,75 @@ export default function ResearchPanel() {
     setKline(undefined);
     fetchResearchRun(researchOpenId).then((live) => {
       if (!alive) return;
-      if (live) {
-        setRun(live);
-        setSource("live");
-      } else {
-        setRun(mock); // 后端不可达 —— 回退本地 mock
-        setSource("offline");
-      }
+      setRun(live ?? undefined);
+      setSource(live ? "live" : "missing");
     });
-    // K 线独立拉取:拉到真实 OHLCV 就画真实,否则回退离线合成序列。
-    fetchKline(researchOpenId).then((live) => {
+    // K 线:优先研究运行时留存的快照,缺失则实时拉取(两者都是真实 OHLCV)。
+    fetchKline(researchOpenId).then(async (snap) => {
       if (!alive) return;
-      setKline(live ?? klineMock);
+      if (snap) {
+        setKline(snap);
+        return;
+      }
+      const live = await fetchLiveKline(researchOpenId, "day", 120);
+      if (alive) setKline(live ?? undefined);
     });
     return () => {
       alive = false;
     };
-    // researchOpenId 变化即重新拉取;mock 由 id 决定,无需单列依赖。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [researchOpenId]);
 
   return (
-    <AnimatePresence>
-      {open && (
-        <>
-          {/* 遮罩 */}
-          <motion.div
-            className="fixed inset-0 z-40 bg-black/55 backdrop-blur-[2px]"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.25 }}
-            onClick={closeResearch}
-          />
-
-          {/* 抽屉 */}
-          <motion.aside
-            className="fixed right-0 top-0 z-50 flex h-screen w-full max-w-[560px] flex-col border-l border-strong bg-space shadow-2xl"
-            initial={{ x: "100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "100%" }}
-            transition={{ type: "spring", stiffness: 320, damping: 34 }}
-          >
-            {/* 抽屉头 */}
-            <div className="flex items-center justify-between border-b border-subtle bg-panel px-4 py-3">
-              <div className="flex items-center gap-2">
-                <FlaskConical size={15} className="text-accent" />
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-display text-sm font-700 text-ink">
-                      {stock?.quote.name ?? researchOpenId} · 深度研究过程
-                    </span>
-                    {run && (
-                      <span className="rounded-sm px-1.5 py-0.5 font-mono text-2xs font-600" style={{ color: "var(--accent)", background: "var(--accent-dim)" }}>
-                        {run.engine.toUpperCase()}
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-0.5 flex items-center gap-2">
-                    <span className="font-mono text-2xs text-ink-3">
-                      Open-Deep-Research · 多智能体 supervisor + 并行子研究
-                    </span>
-                    {source === "live" && (
-                      <span className="inline-flex items-center gap-1 rounded-sm px-1 py-0.5 font-mono text-2xs" style={{ color: "var(--accent)", background: "var(--accent-dim)" }}>
-                        <Wifi size={9} />
-                        实时
-                      </span>
-                    )}
-                    {source === "offline" && (
-                      <span className="inline-flex items-center gap-1 rounded-sm px-1 py-0.5 font-mono text-2xs" style={{ color: "var(--amber)", background: "rgba(240,180,60,0.14)" }}>
-                        <WifiOff size={9} />
-                        离线 mock
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <button
-                onClick={closeResearch}
-                className="rounded-sm p-1.5 text-ink-3 transition-colors hover:bg-elevated hover:text-ink"
-              >
-                <X size={16} />
-              </button>
+    <Drawer
+      open={open}
+      onClose={closeResearch}
+      width={560}
+      styles={{ body: { padding: 0, display: "flex", flexDirection: "column" } }}
+      title={
+        <div className="flex items-center gap-2">
+          <FlaskConical size={15} className="text-accent" />
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-display text-sm font-bold text-ink">
+                {stockName} · 深度研究过程
+              </span>
+              {run && (
+                <span className="rounded-sm px-1.5 py-0.5 font-mono text-2xs font-semibold" style={{ color: "var(--accent)", background: "var(--accent-dim)" }}>
+                  {run.engine.toUpperCase()}
+                </span>
+              )}
             </div>
-
-            {source === "loading" ? (
+            <div className="mt-0.5 flex items-center gap-2">
+              <span className="font-mono text-2xs font-normal text-ink-3">
+                Open-Deep-Research · 多智能体 supervisor + 并行子研究
+              </span>
+              {source === "live" && (
+                <span className="inline-flex items-center gap-1 rounded-sm px-1 py-0.5 font-mono text-2xs font-normal" style={{ color: "var(--accent)", background: "var(--accent-dim)" }}>
+                  <Wifi size={9} />
+                  真实产物
+                </span>
+              )}
+              {source === "missing" && (
+                <span className="inline-flex items-center gap-1 rounded-sm px-1 py-0.5 font-mono text-2xs font-normal" style={{ color: "var(--amber)", background: "rgba(217,119,6,0.12)" }}>
+                  <WifiOff size={9} />
+                  无记录
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      }
+    >
+      {source === "loading" ? (
               <div className="flex flex-1 flex-col items-center justify-center gap-2 text-2xs text-ink-3">
                 <Loader2 size={20} className="animate-spin text-accent" />
                 正在拉取研究记录…
               </div>
             ) : !run ? (
-              <div className="flex flex-1 items-center justify-center text-2xs text-ink-3">
-                暂无该标的的研究记录
+              <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-8 text-center text-2xs leading-relaxed text-ink-3">
+                <FlaskConical size={20} className="mb-1 text-ink-3" />
+                暂无该标的的研究记录。
+                <span>回到主界面点击「发起深度研究」,由 AI 多智能体实时完成一次完整调研。</span>
               </div>
             ) : (
               <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
@@ -300,9 +277,6 @@ export default function ResearchPanel() {
                 </section>
               </div>
             )}
-          </motion.aside>
-        </>
-      )}
-    </AnimatePresence>
+    </Drawer>
   );
 }

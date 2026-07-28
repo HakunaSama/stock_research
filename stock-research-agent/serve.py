@@ -11,6 +11,14 @@ indexes them by ``query.target``, and serves:
     GET /api/context/<target>     -> the full ResearchContext (for debugging)
     GET /healthz                  -> {"ok": true}
 
+Live market data (real upstream sources via stock_agent.market):
+
+    GET /api/quotes?symbols=a,b   -> batch realtime quotes
+    GET /api/market/indices       -> major index quotes
+    GET /api/market/search?q=kw   -> A-share symbol search
+    GET /api/market/kline/<sym>?period=day&count=180 -> live OHLCV + features
+    GET /api/news/<code>          -> per-stock news headlines
+
 The frontend adapter maps ``/api/research/<target>`` onto its ``ResearchRun``
 type. CORS is wide-open (dev tool, read-only, local only). If a target has
 multiple runs, the most recently modified ``context.json`` wins.
@@ -26,7 +34,7 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 
 def _scan_runs(workdir: str) -> Dict[str, Dict[str, Any]]:
@@ -116,7 +124,13 @@ class Handler(BaseHTTPRequestHandler):
         self._send(204, {})
 
     def do_GET(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path.rstrip("/")
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/")
+        query = parse_qs(parsed.query)
+
+        if self._handle_market(path, query):
+            return
+
         runs = _scan_runs(self.workdir)
 
         if path in ("", "/healthz"):
@@ -145,6 +159,47 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self._send(404, {"error": "not found", "path": path})
+
+    def _handle_market(self, path: str, query: Dict[str, List[str]]) -> bool:
+        """Serve live-market routes; return True when the path was ours."""
+        is_market = (
+            path in ("/api/quotes", "/api/market/indices", "/api/market/search", "/api/market/rank")
+            or path.startswith("/api/market/kline/")
+            or path.startswith("/api/news/")
+        )
+        if not is_market:
+            return False
+        try:
+            from stock_agent import market
+        except Exception as exc:  # requests 未安装等 —— 行情能力不可用
+            self._send(503, {"error": f"live market unavailable: {exc}"})
+            return True
+        try:
+            if path == "/api/quotes":
+                symbols = [s for raw in query.get("symbols", []) for s in raw.split(",")]
+                self._send(200, market.get_quotes(symbols))
+            elif path == "/api/market/indices":
+                self._send(200, market.get_indices())
+            elif path == "/api/market/search":
+                kw = (query.get("q") or [""])[0]
+                self._send(200, market.search(kw))
+            elif path == "/api/market/rank":
+                kind = (query.get("kind") or ["pct_desc"])[0]
+                limit = int((query.get("limit") or ["30"])[0])
+                self._send(200, market.get_rank(kind, limit))
+            elif path.startswith("/api/market/kline/"):
+                sym = unquote(path[len("/api/market/kline/"):])
+                period = (query.get("period") or ["day"])[0]
+                count = int((query.get("count") or ["180"])[0])
+                self._send(200, market.get_live_kline(sym, period=period, count=count))
+            else:  # /api/news/<code>
+                code = unquote(path[len("/api/news/"):])
+                self._send(200, market.get_news(code))
+        except ValueError as exc:
+            self._send(400, {"error": str(exc)})
+        except market.MarketError as exc:
+            self._send(502, {"error": str(exc)})
+        return True
 
     @staticmethod
     def _match_target(path: str) -> Tuple[Optional[str], str]:

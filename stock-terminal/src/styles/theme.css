@@ -1,41 +1,46 @@
 :root {
-  /* 背景层级 */
-  --bg-space: #0a0e15;
-  --bg-panel: #111823;
-  --bg-panel-2: #0d1420;
-  --bg-elevated: #17202e;
-  --bg-inset: #0b1119;
+  /* 背景层级 —— Flowbase 浅色：淡紫灰纸面 + 纯白卡片 */
+  --bg-space: #f5f4fb;
+  --bg-panel: #ffffff;
+  --bg-panel-2: #fbfbfe;
+  --bg-elevated: #f3f2fa;
+  --bg-inset: #f1f0f9;
 
   /* 描边 */
-  --border-subtle: #1e2836;
-  --border-strong: #2a3648;
+  --border-subtle: #eae8f4;
+  --border-strong: #d9d6ec;
 
-  /* 文字 */
-  --text-primary: #e7edf5;
-  --text-secondary: #9fb0c3;
-  --text-muted: #61728a;
+  /* 文字 —— 深靛蓝墨色，非纯黑 */
+  --text-primary: #11023b;
+  --text-secondary: #45446b;
+  --text-muted: #8b89a6;
 
-  /* 强调 / 语义色 —— A股习惯：涨红 跌绿 */
-  --accent: #19d19f;
-  --accent-dim: rgba(25, 209, 159, 0.14);
-  --up: #ff5b5b;
-  --up-dim: rgba(255, 91, 91, 0.14);
-  --down: #22c07a;
-  --down-dim: rgba(34, 192, 122, 0.14);
-  --blue: #3f8cff;
-  --blue-dim: rgba(63, 140, 255, 0.16);
-  --amber: #f5b544;
-  --violet: #9d7bff;
+  /* 强调 —— Flowbase 紫罗兰；语义色 A股习惯：涨红 跌绿 */
+  --accent: #8247ff;
+  --accent-dim: rgba(130, 71, 255, 0.1);
+  --ink-deep: #11023b;
+  --up: #e5484d;
+  --up-dim: rgba(229, 72, 77, 0.1);
+  --down: #00a05a;
+  --down-dim: rgba(0, 160, 90, 0.1);
+  --blue: #3e63dd;
+  --blue-dim: rgba(62, 99, 221, 0.1);
+  --amber: #d97706;
+  --violet: #8247ff;
 
-  /* 圆角 */
-  --r-sm: 4px;
-  --r-md: 6px;
-  --r-lg: 10px;
+  /* 圆角 —— Flowbase 偏大圆角 */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
 
   /* 字体 */
-  --font-display: "Chakra Petch", "Noto Sans SC", sans-serif;
+  --font-display: "Plus Jakarta Sans", "Inter", "Noto Sans SC", sans-serif;
   --font-mono: "JetBrains Mono", "SFMono-Regular", monospace;
-  --font-sans: "Noto Sans SC", "Chakra Petch", sans-serif;
+  --font-sans: "Inter", "Noto Sans SC", sans-serif;
+
+  /* 阴影 —— 多层柔和靛蓝投影 */
+  --shadow-card: 0 1px 2px rgba(34, 6, 109, 0.05), 0 8px 24px -8px rgba(34, 6, 109, 0.08);
+  --shadow-pop: 0 8px 20px rgba(34, 6, 109, 0.08), 0 24px 56px -16px rgba(34, 6, 109, 0.22);
 }
 
 * {
@@ -51,35 +56,43 @@ body,
 body {
   margin: 0;
   background:
-    radial-gradient(1200px 600px at 15% -10%, rgba(25, 209, 159, 0.06), transparent 60%),
-    radial-gradient(1000px 500px at 100% 0%, rgba(63, 140, 255, 0.05), transparent 55%),
+    radial-gradient(900px 480px at 0% -10%, rgba(130, 71, 255, 0.07), transparent 55%),
+    radial-gradient(900px 480px at 100% -8%, rgba(130, 71, 255, 0.06), transparent 55%),
     var(--bg-space);
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-synthesis: none;
 }
 
-/* 网格纹理叠层 */
+/* 点状纹理叠层（顶部渐隐）—— Flowbase hero 标志性 dot pattern */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
-  background-size: 32px 32px;
-  mask-image: radial-gradient(circle at 50% 0%, black, transparent 85%);
+  background-image: radial-gradient(rgba(17, 2, 59, 0.06) 1px, transparent 1px);
+  background-size: 18px 18px;
+  mask-image: radial-gradient(circle at 50% 0%, black, transparent 75%);
+}
+
+::selection {
+  background: rgba(130, 71, 255, 0.2);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: var(--r-sm);
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -89,7 +102,7 @@ body::before {
   border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a4a60;
+  background: #c3bfdd;
 }
 
 .font-mono {
@@ -98,6 +111,32 @@ body::before {
 }
 .font-display {
   font-family: var(--font-display);
+}
+
+/* 卡片通用：白底大圆角 + 柔和靛蓝投影，hover 微抬升 */
+.card {
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
+}
+.card-hover {
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card-hover:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(34, 6, 109, 0.06), 0 16px 36px -12px rgba(34, 6, 109, 0.14);
+}
+
+/* 侧栏 Tabs 内容区撑满高度（antd Tabs 默认不传递高度） */
+.side-tabs .ant-tabs-content-holder {
+  flex: 1;
+  min-height: 0;
+}
+.side-tabs .ant-tabs-content,
+.side-tabs .ant-tabs-tabpane {
+  height: 100%;
 }
 
 /* 动画关键帧 */
@@ -132,4 +171,42 @@ body::before {
   100% {
     transform: translateX(200%);
   }
+}
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+.skeleton {
+  border-radius: var(--r-sm);
+  background: linear-gradient(90deg, #eeedf6 25%, #e4e2f0 37%, #eeedf6 63%);
+  background-size: 400px 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+/* 报价数字变动闪烁（涨/跌方向色一闪即逝） */
+@keyframes flash-up {
+  0% {
+    background: var(--up-dim);
+  }
+  100% {
+    background: transparent;
+  }
+}
+@keyframes flash-down {
+  0% {
+    background: var(--down-dim);
+  }
+  100% {
+    background: transparent;
+  }
+}
+.flash-up {
+  animation: flash-up 0.9s ease-out;
+}
+.flash-down {
+  animation: flash-down 0.9s ease-out;
 }

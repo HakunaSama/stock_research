@@ -1,34 +1,67 @@
-import { Clock } from "lucide-react";
-import type { NewsItem } from "@/types/analysis";
+import { useEffect, useState } from "react";
+import { Card, Empty, List, Skeleton, Typography } from "antd";
+import { ReadOutlined } from "@ant-design/icons";
+import { fetchNews } from "@/lib/market";
+import type { NewsArticle } from "@/types/market";
 
-interface Props {
-  items: NewsItem[];
-}
+// 个股实时资讯 —— 东方财富公开接口的真实新闻,按时间倒序。
+export default function NewsFeed({ code }: { code: string }) {
+  const [items, setItems] = useState<NewsArticle[] | null>(null);
 
-export default function NewsFeed({ items }: Props) {
+  useEffect(() => {
+    let alive = true;
+    setItems(null);
+    fetchNews(code).then((list) => {
+      if (alive) setItems(list);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [code]);
+
   return (
-    <div className="flex flex-col">
-      <div className="mb-1.5 flex items-center gap-1.5">
-        <Clock size={11} className="text-ink-3" />
-        <span className="font-display text-2xs font-600 uppercase tracking-wider text-ink-3">
-          资讯流
+    <Card
+      size="small"
+      title={
+        <span className="flex items-center gap-1.5 font-display text-xs font-semibold">
+          <ReadOutlined style={{ color: "var(--accent)" }} />
+          个股资讯
         </span>
-      </div>
-      <div className="relative flex flex-col gap-1.5 pl-3">
-        <div className="absolute left-[3px] top-1 bottom-1 w-px bg-subtle" />
-        {items.map((n, i) => (
-          <div key={i} className="relative">
-            <div
-              className="absolute -left-[10px] top-1 h-1.5 w-1.5 rounded-full"
-              style={{ background: i === 0 ? "var(--accent)" : "var(--border-strong)" }}
-            />
-            <div className="flex items-baseline gap-2">
-              <span className="shrink-0 font-mono text-2xs text-ink-3">{n.time}</span>
-              <span className="text-2xs leading-snug text-ink-2">{n.text}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
+      }
+      extra={<span className="font-mono text-2xs text-ink-3">东方财富 · 实时</span>}
+      styles={{ body: { padding: "4px 12px" } }}
+    >
+      {items == null ? (
+        <Skeleton active paragraph={{ rows: 4 }} title={false} style={{ padding: "8px 0" }} />
+      ) : items.length === 0 ? (
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description={<span className="text-2xs text-ink-3">暂无相关资讯</span>}
+        />
+      ) : (
+        <List
+          size="small"
+          dataSource={items}
+          renderItem={(n) => (
+            <List.Item style={{ padding: "8px 0" }}>
+              <div className="min-w-0 flex-1">
+                <Typography.Link
+                  href={n.url || undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "var(--text-secondary)", fontSize: 12 }}
+                >
+                  {n.title}
+                </Typography.Link>
+                <div className="mt-0.5 flex items-center gap-2 font-mono text-2xs text-ink-3">
+                  <span>{n.date}</span>
+                  {n.source && <span>{n.source}</span>}
+                </div>
+              </div>
+            </List.Item>
+          )}
+        />
+      )}
+    </Card>
   );
 }

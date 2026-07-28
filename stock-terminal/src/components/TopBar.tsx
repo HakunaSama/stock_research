@@ -1,121 +1,128 @@
-import { Activity, Coins, LogOut, RefreshCw, Shield, TrendingUp, User, Wallet } from "lucide-react";
-import { Link } from "react-router-dom";
-import { marketSummary as m } from "@/data/stocks";
-import { dirColor, signPct, fmtMoney } from "@/lib/utils";
+import { Avatar, Button, Dropdown, Tag, Tooltip } from "antd";
+import {
+  CrownOutlined,
+  LogoutOutlined,
+  StockOutlined,
+  UserOutlined,
+  WalletOutlined,
+} from "@ant-design/icons";
+import { Link, useNavigate } from "react-router-dom";
+import { dirColor, signPct } from "@/lib/utils";
 import { useAuth } from "@/store/auth";
+import { useMarket } from "@/store/market";
+import SearchBox from "./SearchBox";
 
+// 顶栏 —— 品牌 / 实时大盘指数 / 全局搜索 / 钱包与账户(antd Dropdown 菜单)。
 export default function TopBar() {
   const { user, wallet, logout } = useAuth();
+  const indices = useMarket((s) => s.indices);
+  const lastUpdated = useMarket((s) => s.lastUpdated);
+  const navigate = useNavigate();
+
+  const menuItems = [
+    {
+      key: "billing",
+      icon: <WalletOutlined />,
+      label: "钱包与充值",
+      onClick: () => navigate("/billing"),
+    },
+    ...(user?.is_admin
+      ? [{
+          key: "admin",
+          icon: <CrownOutlined />,
+          label: "后台管理",
+          onClick: () => navigate("/admin"),
+        }]
+      : []),
+    { type: "divider" as const },
+    {
+      key: "logout",
+      icon: <LogoutOutlined />,
+      label: "退出登录",
+      danger: true,
+      onClick: () => void logout(),
+    },
+  ];
+
   return (
-    <header className="relative z-10 flex items-center justify-between border-b border-subtle bg-panel/80 px-5 py-2.5 backdrop-blur">
-      <div className="flex items-center gap-3">
-        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-accent-dim">
-          <Activity size={16} strokeWidth={2.4} style={{ color: "var(--accent)" }} />
+    <header className="relative z-30 flex items-center justify-between gap-4 border-b border-subtle bg-panel/85 px-4 py-2 backdrop-blur-md">
+      {/* 品牌 */}
+      <div className="flex shrink-0 items-center gap-2.5">
+        <div
+          className="flex h-8 w-8 items-center justify-center rounded-md"
+          style={{ background: "var(--accent-dim)", boxShadow: "inset 0 0 0 1px rgba(130,71,255,0.35)" }}
+        >
+          <StockOutlined style={{ fontSize: 16, color: "var(--accent)" }} />
         </div>
         <div>
-          <div className="font-display text-[15px] font-700 tracking-wide text-ink">
-            量化决策终端
+          <div className="font-display text-[14px] font-bold tracking-wide text-ink">
+            AI 投研终端
           </div>
-          <div className="text-2xs uppercase tracking-[0.25em] text-ink-3">
-            STOCK RESEARCH AGENT
+          <div className="text-2xs uppercase tracking-[0.22em] text-ink-3">
+            Stock Research Terminal
           </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-6">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-ink-3">{m.index}</span>
-          <span className="font-mono text-[15px] font-600 text-ink">
-            {m.indexValue.toFixed(2)}
+      {/* 实时指数条 */}
+      <div className="flex min-w-0 flex-1 items-center gap-5 overflow-hidden pl-2">
+        {indices.slice(0, 4).map((ix) => (
+          <div key={ix.symbol} className="flex shrink-0 items-baseline gap-1.5">
+            <span className="text-2xs text-ink-3">{ix.name}</span>
+            <span className="font-mono text-[13px] font-semibold" style={{ color: dirColor(ix.change_pct) }}>
+              {ix.price.toFixed(2)}
+            </span>
+            <span className="font-mono text-2xs font-medium" style={{ color: dirColor(ix.change_pct) }}>
+              {signPct(ix.change_pct)}
+            </span>
+          </div>
+        ))}
+        {indices.length === 0 && (
+          <div className="flex items-center gap-2">
+            <span className="skeleton h-3.5 w-32" />
+            <span className="skeleton h-3.5 w-32" />
+          </div>
+        )}
+        {lastUpdated != null && (
+          <span className="flex shrink-0 items-center gap-1.5 font-mono text-2xs text-ink-3">
+            <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full" style={{ background: "var(--down)" }} />
+            {new Date(lastUpdated).toLocaleTimeString("zh-CN", { hour12: false })}
           </span>
-          <span
-            className="font-mono text-xs font-600"
-            style={{ color: dirColor(m.indexChangePct) }}
-          >
-            {signPct(m.indexChangePct)}
-          </span>
-        </div>
+        )}
+      </div>
 
-        <div className="h-6 w-px bg-subtle" />
-
-        <div className="flex items-center gap-2">
-          <Wallet size={14} className="text-ink-3" />
-          <span className="text-xs text-ink-3">持仓 {m.positionCount} 只 · 浮盈</span>
-          <span
-            className="font-mono text-[15px] font-600"
-            style={{ color: dirColor(m.totalPnl) }}
-          >
-            {m.totalPnl > 0 ? "+" : ""}
-            {fmtMoney(m.totalPnl)}
-          </span>
-          <span
-            className="font-mono text-xs font-600"
-            style={{ color: dirColor(m.totalPnlPct) }}
-          >
-            {signPct(m.totalPnlPct)}
-          </span>
-        </div>
-
-        <div className="h-6 w-px bg-subtle" />
-
-        <div className="flex items-center gap-2 text-ink-2">
-          <TrendingUp size={14} style={{ color: "var(--up)" }} />
-          <span className="font-mono text-xs">{m.time}</span>
-          <button className="ml-1 flex items-center gap-1 rounded-sm border border-subtle bg-elevated px-2 py-1 text-2xs text-ink-2 transition-colors hover:border-strong hover:text-ink">
-            <RefreshCw size={11} />
-            刷新
-          </button>
-        </div>
+      {/* 搜索 + 账户 */}
+      <div className="flex shrink-0 items-center gap-3">
+        <SearchBox />
 
         {user && (
           <>
-            <div className="h-6 w-px bg-subtle" />
-            {/* 点数余额 + 充值入口 */}
-            <Link
-              to="/billing"
-              className="flex items-center gap-1.5 rounded-sm border border-subtle bg-elevated px-2 py-1 transition-colors hover:border-strong"
-              title="点数余额 · 点击充值"
-            >
-              <Coins size={13} style={{ color: "var(--accent)" }} />
-              <span className="font-mono text-xs font-600 text-ink">{wallet?.balance ?? 0}</span>
-              <span className="text-2xs text-ink-3">点</span>
-              {wallet && wallet.free_left > 0 && (
-                <span className="ml-0.5 text-2xs text-ink-3">· 今日免费 {wallet.free_left}</span>
-              )}
-            </Link>
+            <Tooltip title="点数余额 · 点击充值">
+              <Link to="/billing">
+                <Button size="middle">
+                  <WalletOutlined style={{ color: "var(--accent)" }} />
+                  <span className="font-mono font-semibold">{wallet?.balance ?? 0}</span>
+                  <span className="text-2xs text-ink-3">点</span>
+                  {wallet && wallet.free_left > 0 && (
+                    <Tag color="purple" style={{ marginInlineEnd: 0, fontSize: 10, lineHeight: "16px" }}>
+                      免费 {wallet.free_left}
+                    </Tag>
+                  )}
+                </Button>
+              </Link>
+            </Tooltip>
 
-            <div className="flex items-center gap-2">
-              <span className="flex items-center gap-1 text-xs text-ink-2">
-                <User size={13} className="text-ink-3" />
-                {user.username}
+            <Dropdown menu={{ items: menuItems }} placement="bottomRight" trigger={["click"]}>
+              <button className="flex items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:bg-elevated">
+                <Avatar size={26} icon={<UserOutlined />} style={{ background: "var(--accent-dim)", color: "var(--accent)" }} />
+                <span className="text-xs text-ink-2">{user.username}</span>
                 {user.is_admin && (
-                  <span
-                    className="ml-0.5 rounded-sm px-1 text-2xs font-600"
-                    style={{ background: "var(--accent-dim)", color: "var(--accent)" }}
-                  >
+                  <Tag color="purple" style={{ marginInlineEnd: 0, fontSize: 10, lineHeight: "16px" }}>
                     管理员
-                  </span>
+                  </Tag>
                 )}
-              </span>
-              {user.is_admin && (
-                <Link
-                  to="/admin"
-                  className="flex items-center gap-1 rounded-sm border border-subtle bg-elevated px-2 py-1 text-2xs text-ink-2 transition-colors hover:border-strong hover:text-ink"
-                  title="后台管理"
-                >
-                  <Shield size={11} />
-                  后台
-                </Link>
-              )}
-              <button
-                onClick={() => void logout()}
-                className="flex items-center gap-1 rounded-sm border border-subtle bg-elevated px-2 py-1 text-2xs text-ink-2 transition-colors hover:border-strong hover:text-ink"
-                title="退出登录"
-              >
-                <LogOut size={11} />
-                退出
               </button>
-            </div>
+            </Dropdown>
           </>
         )}
       </div>

@@ -25,7 +25,7 @@
 | 🧠 **多智能体研究引擎** | langchain-ai/open_deep_research 的纯 Python 复刻：生产者产出研究，独立裁判打分，低分**整体重跑**（无反馈重试，最多 8 次） |
 | 📈 **真实 K 线 + 技术特征** | 通过 vendored `stocksdk` 拉 A 股真实 OHLCV，纯 Python 算 MA / RSI / MACD / 关键价位 / 量比 / 蜡烛形态 |
 | 🎛️ **量化决策终端前端** | React + TS + Vite，深色主题、A 股涨红跌绿、手绘蜡烛图、ODR 研究面板、评分闭环时间线 |
-| 🔌 **前后端真实对接** | 极简 stdlib HTTP bridge 暴露 `context.json` / K 线；前端渐进增强——后端在则"实时"，断开则回退"离线 mock"不崩 |
+| 🔌 **全真实数据终端** | 实时指数/报价/K线/个股资讯全部来自真实行情源（多源故障转移）；研究结论/评分/来源全部读后端真实产物，前端零 mock |
 | 🤖 **可插拔真实大模型** | 一个 `urllib` 写的 OpenAI 兼容适配器，换 `.env` 三个值即可驱动火山方舟 / OpenAI / DeepSeek / 通义 等；`FakeLLM` 仍可零 key 离线跑 |
 
 ---
@@ -62,21 +62,24 @@ python3 run_demo.py
 
 用确定性的 `FakeLLM`（不联网、不需要 key）跑完整条 pipeline，打印结论 + 风险块 + 质量评分。
 
-### 2) 前后端联动 demo（真实 K 线 + 离线回退）
+### 2) 前后端联动（真实行情 + 真实研究产物）
 
 ```bash
-# 后端：产出样例 run 并起 bridge
+# 后端：产出样例 run 并起 FastAPI（鉴权/行情/任务队列都在这）
 cd stock-research-agent
+pip install -r requirements.txt
 python3 seed_runs.py /tmp/stock-terminal-data     # 000100 / 002185，含真实日K
-python3 serve.py --workdir /tmp/stock-terminal-data --port 8787
+STOCK_DATA_DIR=/tmp/stock-terminal-data python3 -m uvicorn webapp.app:app --port 8000
 
-# 前端：另开一个终端
+# 前端：另开一个终端（dev server 自动把 /api 反代到 127.0.0.1:8000，同源无 CORS）
 cd stock-terminal
 pnpm install        # 或 npm install
-pnpm dev            # http://localhost:5199
+pnpm dev
 ```
 
-打开个股卡的「研究过程」抽屉即可看到真实蜡烛图 + 技术特征卡。**把 bridge 停掉刷新**，抽屉会自动打上黄色「离线 mock」徽标并用离线合成数据继续渲染——优雅降级。
+注册登录后即是完整终端：顶栏实时指数、自选池实时报价（5s 轮询）、任意标的实时
+K 线（日/周/月/60分）、个股真实资讯、已研究标的的 AI 结论卡与完整研究过程抽屉。
+后端地址可用环境变量 `BACKEND_ORIGIN` 覆盖（默认 `http://127.0.0.1:8000`）。
 
 ### 3) 接真实大模型跑全流程（可选）
 
@@ -129,12 +132,12 @@ python3 run_live.py 000100 "华星光电 1-3 个月是否值得布局？"
 
 ## 🎨 前端亮点
 
+- **全真实数据**：指数/报价/K线/资讯/全市场榜单（涨幅/跌幅/成交额）全部来自真实行情源（腾讯/东财/新浪，多源故障转移），前端无任何硬编码行情。
+- **Ant Design 组件体系**：暗色主题定制；Tabs / Card / Segmented / Drawer / AutoComplete / Form / Dropdown 等通用组件承载主交互。
+- **竞品级交互**：左侧「自选 + 全市场榜单」动态股票池（搜索/榜单一键加自选，本地持久化）；顶栏全局搜索（代码/名称/拼音）；5s 行情轮询；K 线周期切换 + 悬停十字线。
 - **零图表依赖**：蜡烛图、均线、成交量柱、支撑/压力标线全部手绘 SVG。
-- **A 股配色**：涨红跌绿，深色量化终端风。
-- **渐进增强**：`src/lib/api.ts` 优先连后端 bridge（实时），超时/失败自动回退本地 mock 并标注「离线 mock」，离线也能完整演示。
-- **可回溯**：ODR 研究面板展示子研究、评分闭环时间线、重试历史。
-
-用 `VITE_RESEARCH_API` 指向别的 bridge 地址。
+- **A 股配色**：涨红跌绿，石墨蓝 + 终端金的深色量化风。
+- **可回溯**：ODR 研究面板展示子研究、评分闭环时间线、重试历史；未研究标的可一键发起真实多智能体研究（对接点数计费）。
 
 ---
 

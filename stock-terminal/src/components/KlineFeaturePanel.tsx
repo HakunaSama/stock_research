@@ -93,7 +93,7 @@ export default function KlineFeaturePanel({ features }: { features: KlineFeature
             <span
               key={i}
               className="rounded-sm px-1.5 py-0.5 text-2xs"
-              style={{ background: "var(--amber)", color: "#1a1400", opacity: 0.9 }}
+              style={{ background: "var(--amber)", color: "#ffffff", opacity: 0.9 }}
               title={p.detail}
             >
               {p.detail}

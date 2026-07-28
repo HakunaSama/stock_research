@@ -1,96 +1,5 @@
-// 数据契约 —— 对齐 stock_agent 的分析输出（ResearchContext.analysis）。
-// 后端接入时用 adapter 把 ResearchContext 映射到这些结构即可。
-
-export type DecisionType = "stock_pick" | "timing" | "sector" | "portfolio";
-
-export interface Quote {
-  code: string;
-  name: string;
-  price: number;
-  changePct: number;
-  changeAbs: number;
-  time: string;
-}
-
-export interface Position {
-  has: boolean;
-  shares?: number;
-  cost?: number;
-  pnl?: number;
-  pnlPct?: number;
-  buyableAmount?: number;
-  buyableShares?: number;
-}
-
-export interface Scores {
-  composite: number;
-  price: number;
-  volume: number;
-  logic: number;
-  sentiment: number;
-  market: number;
-}
-
-export interface Levels {
-  supportLow: number;
-  resistance: number;
-  secondSupport: number;
-  maLine: number;
-  turnover: string;
-  plannedBuy: string;
-}
-
-export type AttrKey = "价格" | "量能" | "逻辑" | "消息" | "大盘" | "预期";
-
-export interface AttrRow {
-  key: AttrKey;
-  text: string;
-  tone: "up" | "down" | "neutral" | "info";
-}
-
-export interface NewsItem {
-  time: string;
-  text: string;
-}
-
-export interface Verdict {
-  action: string; // 推荐动作，如「推荐持有」「推荐买入」
-  rating: string; // 评级标签
-  rankScore: number; // 综合分（0-100）
-  risk: number; // 风险分
-  headline: string; // 一句话核心结论
-  confidence: number; // 置信度 0-100
-  tags: string[];
-  ops: string; // 操作建议
-  buyPoint: string; // 买点
-  sellPoint: string; // 卖点
-}
-
-export type ViewTab = "推荐持有" | "最新观点" | "位置";
-
-export interface StockAnalysis {
-  id: string;
-  quote: Quote;
-  position: Position;
-  verdict: Verdict;
-  scores: Scores;
-  microProgress: number; // 微观运图（蓝条）0-100
-  compositeProgress: number; // 综合度（红条）0-100
-  positionPct: number; // 位置%
-  levels: Levels;
-  attributes: AttrRow[];
-  news: NewsItem[];
-}
-
-export interface WatchItem {
-  code: string;
-  name: string;
-  price: number;
-  changePct: number;
-  marketCap: string;
-  score: number;
-  note: string;
-}
+// 数据契约 —— 研究过程(ResearchContext.research)与技术面(ctx.kline)。
+// 实时行情/资讯类型见 types/market.ts;此处只保留后端研究产物的结构。
 
 export interface DisciplineItem {
   order: number;
@@ -162,16 +71,6 @@ export interface ResearchRun {
   sources: Source[];
   history: AttemptHistory[];
   odr: ODRTrace;
-}
-
-export interface MarketSummary {
-  index: string;
-  indexValue: number;
-  indexChangePct: number;
-  time: string;
-  totalPnl: number;
-  totalPnlPct: number;
-  positionCount: number;
 }
 
 // ===== K 线（技术面）=====

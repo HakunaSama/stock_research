@@ -36,6 +36,8 @@ from pydantic import BaseModel, Field
 # Reuse serve.py's artifact readers (stdlib-only, already battle-tested).
 from serve import _load_kline, _run_summary, _scan_runs
 
+from stock_agent import market
+
 from . import admin, auth, billing, db, jobs
 
 WORKDIR = os.environ.get("STOCK_DATA_DIR", "/tmp/stock-terminal-data")
@@ -85,6 +87,52 @@ def config():
         "research_cost": billing.research_cost(),
         "payment_provider": billing.provider_name(),
     }
+
+
+# --- live market data (authenticated) ---------------------------------------
+# 真实行情：报价/指数/搜索/K线/资讯，全部来自 stock_agent.market（腾讯/东财/
+# 新浪多源故障转移 + 进程内 TTL 缓存）。上游整体失败时映射为 502。
+
+
+def _market_call(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except market.MarketError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.get("/api/quotes")
+def api_quotes(symbols: str = "", _user=Depends(auth.current_user)):
+    syms = [s for s in symbols.split(",") if s.strip()]
+    return _market_call(market.get_quotes, syms)
+
+
+@app.get("/api/market/indices")
+def api_indices(_user=Depends(auth.current_user)):
+    return _market_call(market.get_indices)
+
+
+@app.get("/api/market/search")
+def api_search(q: str = "", _user=Depends(auth.current_user)):
+    return _market_call(market.search, q)
+
+
+@app.get("/api/market/rank")
+def api_rank(kind: str = "pct_desc", limit: int = 30, _user=Depends(auth.current_user)):
+    return _market_call(market.get_rank, kind, limit)
+
+
+@app.get("/api/market/kline/{symbol}")
+def api_live_kline(symbol: str, period: str = "day", count: int = 180,
+                   _user=Depends(auth.current_user)):
+    return _market_call(market.get_live_kline, symbol, period=period, count=count)
+
+
+@app.get("/api/news/{code}")
+def api_news(code: str, _user=Depends(auth.current_user)):
+    return _market_call(market.get_news, code)
 
 
 # --- read-only run data (authenticated) -------------------------------------

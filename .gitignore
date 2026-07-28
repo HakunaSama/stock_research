@@ -47,3 +47,7 @@ dist-ssr/
 .idea/
 .vscode/*
 !.vscode/extensions.json
+.cursor/
+
+# Local package-manager cache
+.pnpm-store/
