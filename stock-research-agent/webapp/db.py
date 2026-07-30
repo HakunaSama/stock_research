@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -201,13 +202,55 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         -- At most one row per user has is_active=1; runs fall back to the
         -- built-in demo strategy when a user has no active strategy.
         CREATE TABLE IF NOT EXISTS strategies (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id    INTEGER NOT NULL,
-            name       TEXT NOT NULL,
-            raw_text   TEXT NOT NULL,
-            is_active  INTEGER NOT NULL DEFAULT 0,
-            created_at REAL NOT NULL,
-            updated_at REAL NOT NULL,
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         INTEGER NOT NULL,
+            name            TEXT NOT NULL,
+            raw_text        TEXT NOT NULL,
+            is_active       INTEGER NOT NULL DEFAULT 0,
+            is_public       INTEGER NOT NULL DEFAULT 0,
+            summary         TEXT NOT NULL DEFAULT '',
+            like_count      INTEGER NOT NULL DEFAULT 0,
+            favorite_count  INTEGER NOT NULL DEFAULT 0,
+            comment_count   INTEGER NOT NULL DEFAULT 0,
+            published_at    REAL,
+            created_at      REAL NOT NULL,
+            updated_at      REAL NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        -- Hashtag-style tags on strategies (hall discovery).
+        CREATE TABLE IF NOT EXISTS strategy_tags (
+            strategy_id INTEGER NOT NULL,
+            tag         TEXT NOT NULL,
+            PRIMARY KEY (strategy_id, tag),
+            FOREIGN KEY (strategy_id) REFERENCES strategies(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS strategy_likes (
+            user_id     INTEGER NOT NULL,
+            strategy_id INTEGER NOT NULL,
+            created_at  REAL NOT NULL,
+            PRIMARY KEY (user_id, strategy_id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (strategy_id) REFERENCES strategies(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS strategy_favorites (
+            user_id     INTEGER NOT NULL,
+            strategy_id INTEGER NOT NULL,
+            created_at  REAL NOT NULL,
+            PRIMARY KEY (user_id, strategy_id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (strategy_id) REFERENCES strategies(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS strategy_comments (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            strategy_id INTEGER NOT NULL,
+            user_id     INTEGER NOT NULL,
+            body        TEXT NOT NULL,
+            created_at  REAL NOT NULL,
+            FOREIGN KEY (strategy_id) REFERENCES strategies(id) ON DELETE CASCADE,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
 
@@ -217,6 +260,9 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_ledger_user ON credit_ledger(user_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_strategies_user ON strategies(user_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_strategies_public ON strategies(is_public, published_at);
+        CREATE INDEX IF NOT EXISTS idx_strategy_tags_tag ON strategy_tags(tag);
+        CREATE INDEX IF NOT EXISTS idx_strategy_comments ON strategy_comments(strategy_id, created_at);
         """
     )
     conn.commit()
@@ -255,6 +301,57 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # = '') can coexist until they bind one.
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email != ''"
+    )
+
+    # Strategy hall: publish flag, summary, engagement counters + social tables.
+    scols = {r["name"] for r in conn.execute("PRAGMA table_info(strategies)")}
+    for col, ddl in [
+        ("is_public", "ALTER TABLE strategies ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0"),
+        ("summary", "ALTER TABLE strategies ADD COLUMN summary TEXT NOT NULL DEFAULT ''"),
+        ("like_count", "ALTER TABLE strategies ADD COLUMN like_count INTEGER NOT NULL DEFAULT 0"),
+        ("favorite_count", "ALTER TABLE strategies ADD COLUMN favorite_count INTEGER NOT NULL DEFAULT 0"),
+        ("comment_count", "ALTER TABLE strategies ADD COLUMN comment_count INTEGER NOT NULL DEFAULT 0"),
+        ("published_at", "ALTER TABLE strategies ADD COLUMN published_at REAL"),
+    ]:
+        if col not in scols:
+            conn.execute(ddl)
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS strategy_tags (
+            strategy_id INTEGER NOT NULL,
+            tag         TEXT NOT NULL,
+            PRIMARY KEY (strategy_id, tag),
+            FOREIGN KEY (strategy_id) REFERENCES strategies(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS strategy_likes (
+            user_id     INTEGER NOT NULL,
+            strategy_id INTEGER NOT NULL,
+            created_at  REAL NOT NULL,
+            PRIMARY KEY (user_id, strategy_id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (strategy_id) REFERENCES strategies(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS strategy_favorites (
+            user_id     INTEGER NOT NULL,
+            strategy_id INTEGER NOT NULL,
+            created_at  REAL NOT NULL,
+            PRIMARY KEY (user_id, strategy_id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (strategy_id) REFERENCES strategies(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS strategy_comments (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            strategy_id INTEGER NOT NULL,
+            user_id     INTEGER NOT NULL,
+            body        TEXT NOT NULL,
+            created_at  REAL NOT NULL,
+            FOREIGN KEY (strategy_id) REFERENCES strategies(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_strategies_public ON strategies(is_public, published_at);
+        CREATE INDEX IF NOT EXISTS idx_strategy_tags_tag ON strategy_tags(tag);
+        CREATE INDEX IF NOT EXISTS idx_strategy_comments ON strategy_comments(strategy_id, created_at);
+        """
     )
     conn.commit()
 
@@ -643,10 +740,36 @@ def list_pending_jobs() -> List[sqlite3.Row]:
     ).fetchall()
 
 
-# --- strategy library -------------------------------------------------------
+# --- strategy library + hall --------------------------------------------------
 #
-# Hot-pluggable research strategies. Plain rows keyed by user; "activation"
-# is a per-user single-choice flag flipped atomically under the module lock.
+# Personal library: each user owns strategies; at most one is_active=1.
+# Hall: is_public=1 strategies are discoverable; likes / favorites / comments
+# are separate tables with denormalized counters on the strategy row.
+
+_TAG_RE = re.compile(r"^[\w\u4e00-\u9fff-]{1,20}$", re.UNICODE)
+_HASHTAG_RE = re.compile(r"(?:^|[\s,，、])#([\w\u4e00-\u9fff-]{1,20})", re.UNICODE)
+
+
+def normalize_tags(tags: List[str], limit: int = 8) -> List[str]:
+    """Strip #, validate, de-dupe (case-insensitive), cap length."""
+    out: List[str] = []
+    seen: set[str] = set()
+    for raw in tags:
+        t = (raw or "").strip().lstrip("#")
+        if not t or not _TAG_RE.match(t):
+            continue
+        key = t.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(t)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def extract_hashtags(text: str, limit: int = 8) -> List[str]:
+    return normalize_tags(_HASHTAG_RE.findall(text or ""), limit=limit)
 
 
 def list_strategies(user_id: int) -> List[sqlite3.Row]:
@@ -673,6 +796,13 @@ def get_strategy(strategy_id: int, user_id: int) -> Optional[sqlite3.Row]:
     ).fetchone()
 
 
+def get_strategy_row(strategy_id: int) -> Optional[sqlite3.Row]:
+    conn = get_conn()
+    return conn.execute(
+        "SELECT * FROM strategies WHERE id = ?", (strategy_id,)
+    ).fetchone()
+
+
 def get_active_strategy(user_id: int) -> Optional[sqlite3.Row]:
     conn = get_conn()
     return conn.execute(
@@ -681,10 +811,48 @@ def get_active_strategy(user_id: int) -> Optional[sqlite3.Row]:
     ).fetchone()
 
 
+def get_strategy_tags(strategy_id: int) -> List[str]:
+    conn = get_conn()
+    return [
+        r["tag"]
+        for r in conn.execute(
+            "SELECT tag FROM strategy_tags WHERE strategy_id = ? ORDER BY tag",
+            (strategy_id,),
+        ).fetchall()
+    ]
+
+
+def get_strategies_tags_map(strategy_ids: List[int]) -> Dict[int, List[str]]:
+    if not strategy_ids:
+        return {}
+    conn = get_conn()
+    placeholders = ",".join("?" * len(strategy_ids))
+    rows = conn.execute(
+        f"SELECT strategy_id, tag FROM strategy_tags WHERE strategy_id IN ({placeholders}) "
+        "ORDER BY tag",
+        strategy_ids,
+    ).fetchall()
+    out: Dict[int, List[str]] = {sid: [] for sid in strategy_ids}
+    for r in rows:
+        out[r["strategy_id"]].append(r["tag"])
+    return out
+
+
+def _set_strategy_tags(conn: sqlite3.Connection, strategy_id: int, tags: List[str]) -> None:
+    conn.execute("DELETE FROM strategy_tags WHERE strategy_id = ?", (strategy_id,))
+    for tag in tags:
+        conn.execute(
+            "INSERT OR IGNORE INTO strategy_tags (strategy_id, tag) VALUES (?, ?)",
+            (strategy_id, tag),
+        )
+
+
 def create_strategy(
-    user_id: int, name: str, raw_text: str, activate: bool = False
+    user_id: int, name: str, raw_text: str, activate: bool = False,
+    summary: str = "", tags: Optional[List[str]] = None,
 ) -> int:
     now = time.time()
+    tags = normalize_tags(tags or [])
     conn = get_conn()
     with _lock:
         if activate:
@@ -692,27 +860,42 @@ def create_strategy(
                 "UPDATE strategies SET is_active = 0 WHERE user_id = ?", (user_id,)
             )
         cur = conn.execute(
-            "INSERT INTO strategies (user_id, name, raw_text, is_active, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, name, raw_text, 1 if activate else 0, now, now),
+            "INSERT INTO strategies (user_id, name, raw_text, is_active, summary, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, name, raw_text, 1 if activate else 0, summary, now, now),
         )
+        sid = cur.lastrowid
+        _set_strategy_tags(conn, sid, tags)
         conn.commit()
-        return cur.lastrowid
+        return sid
 
 
 def update_strategy(
-    strategy_id: int, user_id: int, name: str, raw_text: str
+    strategy_id: int, user_id: int, name: str, raw_text: str,
+    summary: Optional[str] = None, tags: Optional[List[str]] = None,
 ) -> bool:
     """Edit an owned strategy in place. Returns False if not found / not owned."""
     conn = get_conn()
     with _lock:
-        cur = conn.execute(
-            "UPDATE strategies SET name = ?, raw_text = ?, updated_at = ? "
-            "WHERE id = ? AND user_id = ?",
-            (name, raw_text, time.time(), strategy_id, user_id),
-        )
+        if summary is None:
+            cur = conn.execute(
+                "UPDATE strategies SET name = ?, raw_text = ?, updated_at = ? "
+                "WHERE id = ? AND user_id = ?",
+                (name, raw_text, time.time(), strategy_id, user_id),
+            )
+        else:
+            cur = conn.execute(
+                "UPDATE strategies SET name = ?, raw_text = ?, summary = ?, updated_at = ? "
+                "WHERE id = ? AND user_id = ?",
+                (name, raw_text, summary, time.time(), strategy_id, user_id),
+            )
+        if cur.rowcount == 0:
+            conn.rollback()
+            return False
+        if tags is not None:
+            _set_strategy_tags(conn, strategy_id, normalize_tags(tags))
         conn.commit()
-        return cur.rowcount > 0
+        return True
 
 
 def delete_strategy(strategy_id: int, user_id: int) -> bool:
@@ -751,6 +934,295 @@ def set_active_strategy(user_id: int, strategy_id: int) -> bool:
             )
         conn.commit()
         return True
+
+
+def publish_strategy(
+    strategy_id: int, user_id: int, is_public: bool,
+    tags: Optional[List[str]] = None, summary: Optional[str] = None,
+) -> bool:
+    """Publish / unpublish a strategy to the hall. Optionally refresh tags/summary."""
+    conn = get_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT id, published_at FROM strategies WHERE id = ? AND user_id = ?",
+            (strategy_id, user_id),
+        ).fetchone()
+        if row is None:
+            return False
+        now = time.time()
+        if is_public:
+            published_at = row["published_at"] or now
+            if summary is not None:
+                conn.execute(
+                    "UPDATE strategies SET is_public = 1, published_at = ?, summary = ?, "
+                    "updated_at = ? WHERE id = ?",
+                    (published_at, summary, now, strategy_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE strategies SET is_public = 1, published_at = ?, updated_at = ? "
+                    "WHERE id = ?",
+                    (published_at, now, strategy_id),
+                )
+        else:
+            conn.execute(
+                "UPDATE strategies SET is_public = 0, updated_at = ? WHERE id = ?",
+                (now, strategy_id),
+            )
+        if tags is not None:
+            _set_strategy_tags(conn, strategy_id, normalize_tags(tags))
+        conn.commit()
+        return True
+
+
+def list_hall_strategies(
+    *,
+    viewer_id: int,
+    tag: str = "",
+    q: str = "",
+    sort: str = "hot",
+    limit: int = 30,
+    offset: int = 0,
+) -> List[sqlite3.Row]:
+    """Public strategies for the hall, with viewer like/favorite flags."""
+    conn = get_conn()
+    where = ["s.is_public = 1"]
+    params: list = []
+    if tag:
+        where.append(
+            "EXISTS (SELECT 1 FROM strategy_tags t WHERE t.strategy_id = s.id AND t.tag = ?)"
+        )
+        params.append(tag.lstrip("#"))
+    if q:
+        where.append("(s.name LIKE ? OR s.raw_text LIKE ? OR s.summary LIKE ? OR u.username LIKE ?)")
+        like = f"%{q}%"
+        params += [like, like, like, like]
+    order = {
+        "new": "s.published_at DESC, s.id DESC",
+        "likes": "s.like_count DESC, s.published_at DESC",
+        "comments": "s.comment_count DESC, s.published_at DESC",
+        "hot": "(s.like_count * 3 + s.favorite_count * 2 + s.comment_count) DESC, s.published_at DESC",
+    }.get(sort, "(s.like_count * 3 + s.favorite_count * 2 + s.comment_count) DESC, s.published_at DESC")
+    sql = (
+        "SELECT s.*, u.username AS author_name, "
+        "EXISTS(SELECT 1 FROM strategy_likes l WHERE l.strategy_id = s.id AND l.user_id = ?) AS liked, "
+        "EXISTS(SELECT 1 FROM strategy_favorites f WHERE f.strategy_id = s.id AND f.user_id = ?) AS favorited "
+        f"FROM strategies s JOIN users u ON u.id = s.user_id "
+        f"WHERE {' AND '.join(where)} ORDER BY {order} LIMIT ? OFFSET ?"
+    )
+    params = [viewer_id, viewer_id] + params + [limit, offset]
+    return conn.execute(sql, params).fetchall()
+
+
+def get_hall_strategy(strategy_id: int, viewer_id: int) -> Optional[sqlite3.Row]:
+    conn = get_conn()
+    return conn.execute(
+        "SELECT s.*, u.username AS author_name, "
+        "EXISTS(SELECT 1 FROM strategy_likes l WHERE l.strategy_id = s.id AND l.user_id = ?) AS liked, "
+        "EXISTS(SELECT 1 FROM strategy_favorites f WHERE f.strategy_id = s.id AND f.user_id = ?) AS favorited "
+        "FROM strategies s JOIN users u ON u.id = s.user_id "
+        "WHERE s.id = ? AND (s.is_public = 1 OR s.user_id = ?)",
+        (viewer_id, viewer_id, strategy_id, viewer_id),
+    ).fetchone()
+
+
+def list_popular_tags(limit: int = 40) -> List[Dict[str, Any]]:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT t.tag AS tag, COUNT(*) AS count FROM strategy_tags t "
+        "JOIN strategies s ON s.id = t.strategy_id AND s.is_public = 1 "
+        "GROUP BY t.tag ORDER BY count DESC, t.tag LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [{"tag": r["tag"], "count": r["count"]} for r in rows]
+
+
+def toggle_like(user_id: int, strategy_id: int) -> Optional[Dict[str, Any]]:
+    """Like / unlike a public strategy. Returns {liked, like_count} or None."""
+    conn = get_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT id, is_public, like_count FROM strategies WHERE id = ?", (strategy_id,)
+        ).fetchone()
+        if row is None or not row["is_public"]:
+            return None
+        existing = conn.execute(
+            "SELECT 1 FROM strategy_likes WHERE user_id = ? AND strategy_id = ?",
+            (user_id, strategy_id),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "DELETE FROM strategy_likes WHERE user_id = ? AND strategy_id = ?",
+                (user_id, strategy_id),
+            )
+            conn.execute(
+                "UPDATE strategies SET like_count = MAX(0, like_count - 1) WHERE id = ?",
+                (strategy_id,),
+            )
+            liked = False
+        else:
+            conn.execute(
+                "INSERT INTO strategy_likes (user_id, strategy_id, created_at) VALUES (?, ?, ?)",
+                (user_id, strategy_id, time.time()),
+            )
+            conn.execute(
+                "UPDATE strategies SET like_count = like_count + 1 WHERE id = ?",
+                (strategy_id,),
+            )
+            liked = True
+        count = conn.execute(
+            "SELECT like_count FROM strategies WHERE id = ?", (strategy_id,)
+        ).fetchone()["like_count"]
+        conn.commit()
+        return {"liked": liked, "like_count": int(count)}
+
+
+def toggle_favorite(user_id: int, strategy_id: int) -> Optional[Dict[str, Any]]:
+    conn = get_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT id, is_public, favorite_count FROM strategies WHERE id = ?",
+            (strategy_id,),
+        ).fetchone()
+        if row is None or not row["is_public"]:
+            return None
+        existing = conn.execute(
+            "SELECT 1 FROM strategy_favorites WHERE user_id = ? AND strategy_id = ?",
+            (user_id, strategy_id),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "DELETE FROM strategy_favorites WHERE user_id = ? AND strategy_id = ?",
+                (user_id, strategy_id),
+            )
+            conn.execute(
+                "UPDATE strategies SET favorite_count = MAX(0, favorite_count - 1) WHERE id = ?",
+                (strategy_id,),
+            )
+            favorited = False
+        else:
+            conn.execute(
+                "INSERT INTO strategy_favorites (user_id, strategy_id, created_at) VALUES (?, ?, ?)",
+                (user_id, strategy_id, time.time()),
+            )
+            conn.execute(
+                "UPDATE strategies SET favorite_count = favorite_count + 1 WHERE id = ?",
+                (strategy_id,),
+            )
+            favorited = True
+        count = conn.execute(
+            "SELECT favorite_count FROM strategies WHERE id = ?", (strategy_id,)
+        ).fetchone()["favorite_count"]
+        conn.commit()
+        return {"favorited": favorited, "favorite_count": int(count)}
+
+
+def list_favorite_strategies(user_id: int, limit: int = 50) -> List[sqlite3.Row]:
+    conn = get_conn()
+    return conn.execute(
+        "SELECT s.*, u.username AS author_name, 1 AS favorited, "
+        "EXISTS(SELECT 1 FROM strategy_likes l WHERE l.strategy_id = s.id AND l.user_id = ?) AS liked "
+        "FROM strategy_favorites f "
+        "JOIN strategies s ON s.id = f.strategy_id AND s.is_public = 1 "
+        "JOIN users u ON u.id = s.user_id "
+        "WHERE f.user_id = ? ORDER BY f.created_at DESC LIMIT ?",
+        (user_id, user_id, limit),
+    ).fetchall()
+
+
+def list_comments(strategy_id: int, limit: int = 100) -> List[sqlite3.Row]:
+    conn = get_conn()
+    return conn.execute(
+        "SELECT c.*, u.username FROM strategy_comments c "
+        "JOIN users u ON u.id = c.user_id "
+        "WHERE c.strategy_id = ? ORDER BY c.created_at DESC LIMIT ?",
+        (strategy_id, limit),
+    ).fetchall()
+
+
+def add_comment(strategy_id: int, user_id: int, body: str) -> Optional[int]:
+    conn = get_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT id, is_public FROM strategies WHERE id = ?", (strategy_id,)
+        ).fetchone()
+        if row is None or not row["is_public"]:
+            return None
+        cur = conn.execute(
+            "INSERT INTO strategy_comments (strategy_id, user_id, body, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (strategy_id, user_id, body, time.time()),
+        )
+        conn.execute(
+            "UPDATE strategies SET comment_count = comment_count + 1 WHERE id = ?",
+            (strategy_id,),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def delete_comment(comment_id: int, user_id: int, is_admin: bool = False) -> bool:
+    conn = get_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT id, strategy_id, user_id FROM strategy_comments WHERE id = ?",
+            (comment_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        if row["user_id"] != user_id and not is_admin:
+            return False
+        conn.execute("DELETE FROM strategy_comments WHERE id = ?", (comment_id,))
+        conn.execute(
+            "UPDATE strategies SET comment_count = MAX(0, comment_count - 1) WHERE id = ?",
+            (row["strategy_id"],),
+        )
+        conn.commit()
+        return True
+
+
+def adopt_strategy(source_id: int, user_id: int, activate: bool = False) -> Optional[int]:
+    """Copy a public strategy into the viewer's personal library."""
+    conn = get_conn()
+    with _lock:
+        src = conn.execute(
+            "SELECT * FROM strategies WHERE id = ? AND is_public = 1", (source_id,)
+        ).fetchone()
+        if src is None:
+            return None
+        if src["user_id"] == user_id:
+            # Already own it — just optionally activate.
+            if activate:
+                conn.execute("UPDATE strategies SET is_active = 0 WHERE user_id = ?", (user_id,))
+                conn.execute(
+                    "UPDATE strategies SET is_active = 1, updated_at = ? WHERE id = ?",
+                    (time.time(), source_id),
+                )
+                conn.commit()
+            return source_id
+        tags = [
+            r["tag"]
+            for r in conn.execute(
+                "SELECT tag FROM strategy_tags WHERE strategy_id = ?", (source_id,)
+            ).fetchall()
+        ]
+        now = time.time()
+        if activate:
+            conn.execute("UPDATE strategies SET is_active = 0 WHERE user_id = ?", (user_id,))
+        name = src["name"]
+        if len(name) > 36:
+            name = name[:36]
+        name = f"{name}·副本"
+        cur = conn.execute(
+            "INSERT INTO strategies (user_id, name, raw_text, is_active, summary, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, name, src["raw_text"], 1 if activate else 0,
+             src["summary"] or "", now, now),
+        )
+        sid = cur.lastrowid
+        _set_strategy_tags(conn, sid, tags)
+        conn.commit()
+        return sid
 
 
 # --- credits / billing ------------------------------------------------------

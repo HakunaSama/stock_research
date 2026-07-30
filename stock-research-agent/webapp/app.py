@@ -29,6 +29,7 @@ from __future__ import annotations
 import os
 import time
 from contextlib import asynccontextmanager
+from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,7 +46,7 @@ from stock_agent.live_llm import load_dotenv
 # emailer/SMTP reads env per send. Explicitly exported vars still win.
 load_dotenv()
 
-from . import admin, auth, billing, db, emailer, jobs  # noqa: E402
+from . import admin, auth, billing, db, emailer, hall, jobs  # noqa: E402
 
 WORKDIR = os.environ.get("STOCK_DATA_DIR", "/tmp/stock-terminal-data")
 
@@ -63,6 +64,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="Stock Research Terminal", version="1.0.0", lifespan=lifespan)
 app.include_router(auth.router)
 app.include_router(admin.router)
+app.include_router(hall.router)
 
 # Same-origin in prod; opt-in CORS for local dev (vite on :5173 → backend :8000).
 _dev_origin = os.environ.get("DEV_CORS_ORIGIN")
@@ -217,6 +219,7 @@ def list_jobs(user=Depends(auth.current_user)):
 # 策略热插拔:用户维护自己的自然语言策略,激活其一;发起研究时由管线的
 # strategy 编译器(stock_agent/strategy.py)编译成结构化规则逐条核对。
 # id=0 恒指内置示例策略(不可编辑/删除,作为无自定义策略时的回退)。
+# 公开到「策略大厅」后,其他用户可点赞/收藏/评论/采用到自己的库。
 
 MAX_STRATEGIES_PER_USER = 20
 
@@ -224,18 +227,40 @@ MAX_STRATEGIES_PER_USER = 20
 class StrategyBody(BaseModel):
     name: str = Field(..., min_length=1, max_length=40)
     raw_text: str = Field(..., min_length=10, max_length=4000)
+    summary: str = Field(default="", max_length=120)
+    tags: List[str] = Field(default_factory=list, max_length=8)
     activate: bool = Field(default=False)
 
 
+class PublishBody(BaseModel):
+    is_public: bool = True
+    summary: str = Field(default="", max_length=120)
+    tags: Optional[List[str]] = Field(default=None, max_length=8)
+
+
 def _strategy_public(row) -> dict:
+    tags = db.get_strategy_tags(row["id"])
     return {
         "id": row["id"],
         "name": row["name"],
         "raw_text": row["raw_text"],
+        "summary": row["summary"] or "",
+        "tags": tags,
         "is_active": bool(row["is_active"]),
+        "is_public": bool(row["is_public"]),
+        "like_count": int(row["like_count"] or 0),
+        "favorite_count": int(row["favorite_count"] or 0),
+        "comment_count": int(row["comment_count"] or 0),
+        "published_at": row["published_at"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
+
+
+def _merge_tags(explicit: List[str], raw_text: str) -> List[str]:
+    """Combine form tags with inline #hashtags from the strategy text."""
+    merged = list(explicit or []) + db.extract_hashtags(raw_text)
+    return db.normalize_tags(merged)
 
 
 @app.get("/api/strategies")
@@ -257,15 +282,21 @@ def list_strategies(user=Depends(auth.current_user)):
 def create_strategy(body: StrategyBody, user=Depends(auth.current_user)):
     if db.count_strategies(user["id"]) >= MAX_STRATEGIES_PER_USER:
         raise HTTPException(status_code=400, detail=f"策略数量已达上限（{MAX_STRATEGIES_PER_USER} 条）。")
+    tags = _merge_tags(body.tags, body.raw_text)
     sid = db.create_strategy(
-        user["id"], body.name.strip(), body.raw_text.strip(), activate=body.activate
+        user["id"], body.name.strip(), body.raw_text.strip(),
+        activate=body.activate, summary=body.summary.strip(), tags=tags,
     )
     return _strategy_public(db.get_strategy(sid, user["id"]))
 
 
 @app.put("/api/strategies/{sid}")
 def update_strategy(sid: int, body: StrategyBody, user=Depends(auth.current_user)):
-    if not db.update_strategy(sid, user["id"], body.name.strip(), body.raw_text.strip()):
+    tags = _merge_tags(body.tags, body.raw_text)
+    if not db.update_strategy(
+        sid, user["id"], body.name.strip(), body.raw_text.strip(),
+        summary=body.summary.strip(), tags=tags,
+    ):
         raise HTTPException(status_code=404, detail="策略不存在")
     if body.activate:
         db.set_active_strategy(user["id"], sid)
@@ -285,6 +316,23 @@ def activate_strategy(sid: int, user=Depends(auth.current_user)):
     if not db.set_active_strategy(user["id"], sid):
         raise HTTPException(status_code=404, detail="策略不存在")
     return {"ok": True, "active_id": sid}
+
+
+@app.post("/api/strategies/{sid}/publish")
+def publish_strategy(sid: int, body: PublishBody, user=Depends(auth.current_user)):
+    """发布 / 取消发布到策略大厅。发布时可同步摘要与标签。"""
+    row = db.get_strategy(sid, user["id"])
+    if row is None:
+        raise HTTPException(status_code=404, detail="策略不存在")
+    tags = body.tags
+    if body.is_public and tags is None:
+        tags = db.get_strategy_tags(sid) or db.extract_hashtags(row["raw_text"])
+    summary = body.summary.strip() if body.summary else (row["summary"] or "")
+    if not db.publish_strategy(
+        sid, user["id"], body.is_public, tags=tags, summary=summary or None,
+    ):
+        raise HTTPException(status_code=404, detail="策略不存在")
+    return _strategy_public(db.get_strategy(sid, user["id"]))
 
 
 # --- wallet / billing (authenticated) ---------------------------------------

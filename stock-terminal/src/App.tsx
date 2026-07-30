@@ -5,6 +5,7 @@ import Home from "@/pages/Home";
 import Login from "@/pages/Login";
 import Billing from "@/pages/Billing";
 import Admin from "@/pages/Admin";
+import Hall from "@/pages/Hall";
 import { useAuth } from "@/store/auth";
 
 // 路由守卫:未登录 → 跳登录页;bootstrap 未完成 → 显示加载态(避免闪烁)。
@@ -59,6 +60,14 @@ export default function App() {
           element={
             <RequireAuth>
               <Billing />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/hall"
+          element={
+            <RequireAuth>
+              <Hall />
             </RequireAuth>
           }
         />

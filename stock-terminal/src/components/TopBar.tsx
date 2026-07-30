@@ -4,6 +4,7 @@ import {
   CrownOutlined,
   LogoutOutlined,
   SafetyOutlined,
+  ShopOutlined,
   SlidersOutlined,
   StockOutlined,
   UserOutlined,
@@ -33,6 +34,12 @@ export default function TopBar() {
       icon: <SlidersOutlined />,
       label: "策略库（热插拔）",
       onClick: openStrategies,
+    },
+    {
+      key: "hall",
+      icon: <ShopOutlined />,
+      label: "策略大厅",
+      onClick: () => navigate("/hall"),
     },
     {
       key: "account",

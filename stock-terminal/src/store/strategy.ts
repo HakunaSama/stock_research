@@ -7,6 +7,7 @@ import {
   createStrategy,
   deleteStrategy,
   fetchStrategies,
+  publishStrategy,
   updateStrategy,
   type BuiltinStrategy,
   type Strategy,
@@ -25,10 +26,23 @@ interface StrategyState {
 
   refresh: () => Promise<void>;
   ensureLoaded: () => void;
-  create: (name: string, rawText: string, activate: boolean) => Promise<void>;
-  update: (id: number, name: string, rawText: string) => Promise<void>;
+  create: (payload: {
+    name: string;
+    rawText: string;
+    summary?: string;
+    tags?: string[];
+    activate: boolean;
+  }) => Promise<void>;
+  update: (payload: {
+    id: number;
+    name: string;
+    rawText: string;
+    summary?: string;
+    tags?: string[];
+  }) => Promise<void>;
   remove: (id: number) => Promise<void>;
   activate: (id: number) => Promise<void>;
+  publish: (id: number, isPublic: boolean, summary?: string, tags?: string[]) => Promise<void>;
 }
 
 export const useStrategies = create<StrategyState>()((set, get) => ({
@@ -67,13 +81,13 @@ export const useStrategies = create<StrategyState>()((set, get) => ({
     if (!get().loaded && !get().loading) void get().refresh();
   },
 
-  create: async (name, rawText, activate) => {
-    await createStrategy(name, rawText, activate);
+  create: async ({ name, rawText, summary = "", tags = [], activate }) => {
+    await createStrategy({ name, raw_text: rawText, summary, tags, activate });
     await get().refresh();
   },
 
-  update: async (id, name, rawText) => {
-    await updateStrategy(id, name, rawText);
+  update: async ({ id, name, rawText, summary = "", tags = [] }) => {
+    await updateStrategy(id, { name, raw_text: rawText, summary, tags });
     await get().refresh();
   },
 
@@ -84,6 +98,11 @@ export const useStrategies = create<StrategyState>()((set, get) => ({
 
   activate: async (id) => {
     await activateStrategy(id);
+    await get().refresh();
+  },
+
+  publish: async (id, isPublic, summary, tags) => {
+    await publishStrategy(id, { is_public: isPublic, summary, tags });
     await get().refresh();
   },
 }));
