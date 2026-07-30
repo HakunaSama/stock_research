@@ -1,7 +1,10 @@
+import { useState } from "react";
 import { Avatar, Button, Dropdown, Tag, Tooltip } from "antd";
 import {
   CrownOutlined,
   LogoutOutlined,
+  SafetyOutlined,
+  SlidersOutlined,
   StockOutlined,
   UserOutlined,
   WalletOutlined,
@@ -10,16 +13,33 @@ import { Link, useNavigate } from "react-router-dom";
 import { dirColor, signPct } from "@/lib/utils";
 import { useAuth } from "@/store/auth";
 import { useMarket } from "@/store/market";
+import { useStrategies } from "@/store/strategy";
+import AccountModal from "./AccountModal";
 import SearchBox from "./SearchBox";
+import StrategyDrawer from "./StrategyDrawer";
 
-// 顶栏 —— 品牌 / 实时大盘指数 / 全局搜索 / 钱包与账户(antd Dropdown 菜单)。
+// 顶栏 —— 品牌 / 实时大盘指数 / 全局搜索 / 策略库 / 钱包与账户(antd Dropdown 菜单)。
 export default function TopBar() {
   const { user, wallet, logout } = useAuth();
   const indices = useMarket((s) => s.indices);
   const lastUpdated = useMarket((s) => s.lastUpdated);
+  const openStrategies = useStrategies((s) => s.openDrawer);
   const navigate = useNavigate();
+  const [accountOpen, setAccountOpen] = useState(false);
 
   const menuItems = [
+    {
+      key: "strategies",
+      icon: <SlidersOutlined />,
+      label: "策略库（热插拔）",
+      onClick: openStrategies,
+    },
+    {
+      key: "account",
+      icon: <SafetyOutlined />,
+      label: "账号与安全",
+      onClick: () => setAccountOpen(true),
+    },
     {
       key: "billing",
       icon: <WalletOutlined />,
@@ -108,6 +128,11 @@ export default function TopBar() {
                       免费 {wallet.free_left}
                     </Tag>
                   )}
+                  {wallet?.sub_active && (
+                    <Tag color="gold" style={{ marginInlineEnd: 0, fontSize: 10, lineHeight: "16px" }}>
+                      会员
+                    </Tag>
+                  )}
                 </Button>
               </Link>
             </Tooltip>
@@ -126,6 +151,9 @@ export default function TopBar() {
           </>
         )}
       </div>
+
+      <StrategyDrawer />
+      <AccountModal open={accountOpen} onClose={() => setAccountOpen(false)} />
     </header>
   );
 }

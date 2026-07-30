@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Check,
   Coins,
+  Crown,
   Loader2,
   Sparkles,
   Wallet as WalletIcon,
@@ -70,7 +71,11 @@ export default function Billing() {
       if (intent.auto_confirm) {
         const res = await simulatePayment(intent.out_trade_no);
         if (res.ok) {
-          setMsg(`支付成功,到账 ${intent.credits} 点,当前余额 ${res.balance} 点。`);
+          setMsg(
+            plan.kind === "monthly"
+              ? `支付成功,会员已开通/续期 ${plan.days ?? 30} 天,另到账 ${intent.credits} 点。`
+              : `支付成功,到账 ${intent.credits} 点,当前余额 ${res.balance} 点。`,
+          );
         } else {
           setMsg(`该订单已处理,当前余额 ${res.balance} 点。`);
         }
@@ -101,10 +106,22 @@ export default function Billing() {
         </div>
       </div>
 
-      <h1 className="font-display text-xl font-700 text-ink">点数充值</h1>
+      <h1 className="font-display text-xl font-700 text-ink">充值与订阅</h1>
       <p className="mt-1 text-xs text-ink-3">
         每次深度研究消耗 {wallet?.research_cost ?? 1} 点。每日有 {wallet?.daily_quota ?? 0} 次免费额度,用完后从点数余额扣除。
       </p>
+
+      {/* 会员状态横幅 */}
+      {wallet?.sub_active && wallet.sub_expires_at && (
+        <div
+          className="mt-3 flex items-center gap-2 rounded-md border px-3 py-2 text-xs"
+          style={{ borderColor: "var(--accent)", background: "var(--accent-dim)", color: "var(--accent)" }}
+        >
+          <Crown size={14} />
+          <span className="font-600">会员生效中</span>
+          <span>有效期至 {fmtTs(wallet.sub_expires_at)} · 每日免费额度 {wallet.daily_quota} 次</span>
+        </div>
+      )}
 
       {(msg || err) && (
         <div
@@ -139,8 +156,17 @@ export default function Billing() {
                 <span className="font-display text-sm font-700 text-ink">{plan.name}</span>
               </div>
               <div className="mt-2 flex items-baseline gap-1">
-                <span className="font-mono text-2xl font-700 text-ink">{plan.credits}</span>
-                <span className="text-2xs text-ink-3">点{monthly ? " / 月" : ""}</span>
+                {monthly ? (
+                  <>
+                    <span className="font-mono text-2xl font-700 text-ink">{plan.days ?? 30}</span>
+                    <span className="text-2xs text-ink-3">天会员 + {plan.credits} 点</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="font-mono text-2xl font-700 text-ink">{plan.credits}</span>
+                    <span className="text-2xs text-ink-3">点</span>
+                  </>
+                )}
               </div>
               <div className="mt-1 text-2xs text-ink-3">{plan.desc}</div>
               <div className="mt-3 font-mono text-lg font-700" style={{ color: "var(--accent)" }}>
@@ -157,7 +183,7 @@ export default function Billing() {
                 ) : (
                   <WalletIcon size={13} />
                 )}
-                {monthly ? "订阅" : "购买"}
+                {monthly ? (wallet?.sub_active ? "续费会员" : "开通会员") : "购买"}
               </button>
             </motion.div>
           );

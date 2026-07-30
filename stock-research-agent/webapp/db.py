@@ -94,11 +94,40 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS users (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            username      TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            created_at    REAL NOT NULL,
-            is_admin      INTEGER NOT NULL DEFAULT 0
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            username       TEXT UNIQUE NOT NULL,
+            password_hash  TEXT NOT NULL,
+            created_at     REAL NOT NULL,
+            is_admin       INTEGER NOT NULL DEFAULT 0,
+            email          TEXT NOT NULL DEFAULT '',
+            email_verified INTEGER NOT NULL DEFAULT 0,
+            disabled       INTEGER NOT NULL DEFAULT 0
+        );
+
+        -- Email verification codes (register / reset password / bind email).
+        -- Only the PBKDF2 hash of the code is stored; codes expire and burn
+        -- after MAX attempts, so rows are short-lived throwaways.
+        CREATE TABLE IF NOT EXISTS email_codes (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            email      TEXT NOT NULL,
+            purpose    TEXT NOT NULL,               -- register|reset|bind
+            code_hash  TEXT NOT NULL,
+            attempts   INTEGER NOT NULL DEFAULT 0,
+            used       INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL,
+            expires_at REAL NOT NULL
+        );
+
+        -- Membership subscriptions: one row per user, extended on each
+        -- monthly-plan purchase (or by an admin grant). "Active" simply means
+        -- expires_at is in the future — no cron needed.
+        CREATE TABLE IF NOT EXISTS subscriptions (
+            user_id    INTEGER PRIMARY KEY,
+            plan_code  TEXT NOT NULL DEFAULT '',
+            started_at REAL NOT NULL,
+            expires_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS sessions (
@@ -167,10 +196,27 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
 
+        -- User strategy library (hot-pluggable research strategies) -----------
+        -- Free-text strategies the research pipeline compiles at run time.
+        -- At most one row per user has is_active=1; runs fall back to the
+        -- built-in demo strategy when a user has no active strategy.
+        CREATE TABLE IF NOT EXISTS strategies (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER NOT NULL,
+            name       TEXT NOT NULL,
+            raw_text   TEXT NOT NULL,
+            is_active  INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
         CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_email_codes ON email_codes(email, purpose, created_at);
         CREATE INDEX IF NOT EXISTS idx_jobs_user ON research_jobs(user_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_ledger_user ON credit_ledger(user_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_strategies_user ON strategies(user_id, created_at);
         """
     )
     conn.commit()
@@ -191,28 +237,108 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE research_jobs ADD COLUMN charged_credits INTEGER NOT NULL DEFAULT 0")
     if "refunded" not in cols:
         conn.execute("ALTER TABLE research_jobs ADD COLUMN refunded INTEGER NOT NULL DEFAULT 0")
+    if "strategy_id" not in cols:
+        # Which library strategy the run was enqueued with (0 = built-in demo).
+        conn.execute("ALTER TABLE research_jobs ADD COLUMN strategy_id INTEGER NOT NULL DEFAULT 0")
+    if "strategy_name" not in cols:
+        # Denormalized for display: survives later edits/deletes of the strategy.
+        conn.execute("ALTER TABLE research_jobs ADD COLUMN strategy_name TEXT NOT NULL DEFAULT ''")
+
+    ucols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+    if "email" not in ucols:
+        conn.execute("ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''")
+    if "email_verified" not in ucols:
+        conn.execute("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
+    if "disabled" not in ucols:
+        conn.execute("ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0")
+    # Unique on non-empty emails only, so legacy username-only accounts (email
+    # = '') can coexist until they bind one.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email != ''"
+    )
     conn.commit()
 
 
 # --- users ------------------------------------------------------------------
 
 
-def create_user(username: str, password: str, is_admin: bool = False) -> Dict[str, Any]:
+def create_user(
+    username: str, password: str, is_admin: bool = False,
+    email: str = "", email_verified: bool = False,
+) -> Dict[str, Any]:
     conn = get_conn()
     with _lock:
         cur = conn.execute(
-            "INSERT INTO users (username, password_hash, created_at, is_admin) VALUES (?, ?, ?, ?)",
-            (username, hash_password(password), time.time(), 1 if is_admin else 0),
+            "INSERT INTO users (username, password_hash, created_at, is_admin, email, email_verified) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (username, hash_password(password), time.time(), 1 if is_admin else 0,
+             email, 1 if email_verified else 0),
         )
         conn.commit()
         uid = cur.lastrowid
-    return {"id": uid, "username": username, "is_admin": is_admin}
+    return {"id": uid, "username": username, "is_admin": is_admin, "email": email}
 
 
 def get_user_by_username(username: str) -> Optional[sqlite3.Row]:
     conn = get_conn()
     cur = conn.execute("SELECT * FROM users WHERE username = ?", (username,))
     return cur.fetchone()
+
+
+def get_user_by_email(email: str) -> Optional[sqlite3.Row]:
+    if not email:
+        return None
+    conn = get_conn()
+    cur = conn.execute("SELECT * FROM users WHERE email = ?", (email,))
+    return cur.fetchone()
+
+
+def set_user_password(user_id: int, new_password: str) -> None:
+    conn = get_conn()
+    with _lock:
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (hash_password(new_password), user_id),
+        )
+        conn.commit()
+
+
+def set_user_email(user_id: int, email: str, verified: bool = True) -> None:
+    conn = get_conn()
+    with _lock:
+        conn.execute(
+            "UPDATE users SET email = ?, email_verified = ? WHERE id = ?",
+            (email, 1 if verified else 0, user_id),
+        )
+        conn.commit()
+
+
+def set_user_disabled(user_id: int, disabled: bool) -> None:
+    conn = get_conn()
+    with _lock:
+        conn.execute(
+            "UPDATE users SET disabled = ? WHERE id = ?",
+            (1 if disabled else 0, user_id),
+        )
+        if disabled:
+            # Kick a banned user out immediately — their sessions die with them.
+            conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        conn.commit()
+
+
+def revoke_user_sessions(user_id: int, keep_token: str = "") -> None:
+    """Log the user out everywhere (e.g. after a password change), optionally
+    keeping the session that performed the change."""
+    conn = get_conn()
+    with _lock:
+        if keep_token:
+            conn.execute(
+                "DELETE FROM sessions WHERE user_id = ? AND token != ?",
+                (user_id, keep_token),
+            )
+        else:
+            conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        conn.commit()
 
 
 def get_user_by_id(user_id: int) -> Optional[sqlite3.Row]:
@@ -265,7 +391,10 @@ def get_session_user(token: str) -> Optional[sqlite3.Row]:
     if row["expires_at"] < time.time():
         delete_session(token)
         return None
-    return get_user_by_id(row["user_id"])
+    user = get_user_by_id(row["user_id"])
+    if user is not None and user["disabled"]:
+        return None  # banned accounts hold no live sessions
+    return user
 
 
 def delete_session(token: str) -> None:
@@ -282,25 +411,150 @@ def purge_expired_sessions() -> None:
         conn.commit()
 
 
+# --- email verification codes -------------------------------------------------
+#
+# Flow: create_email_code() when sending, verify_email_code() when the user
+# submits. Codes are stored hashed (same PBKDF2 as passwords), single-use,
+# TTL-bound and burned after too many wrong attempts. Rate limiting (resend
+# interval + daily cap) is enforced by the callers via the query helpers.
+
+EMAIL_CODE_MAX_ATTEMPTS = 5
+
+
+def create_email_code(email: str, purpose: str, code: str, ttl_seconds: int) -> None:
+    now = time.time()
+    conn = get_conn()
+    with _lock:
+        # A fresh code supersedes previous outstanding ones for this email+purpose.
+        conn.execute(
+            "UPDATE email_codes SET used = 1 WHERE email = ? AND purpose = ? AND used = 0",
+            (email, purpose),
+        )
+        conn.execute(
+            "INSERT INTO email_codes (email, purpose, code_hash, created_at, expires_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (email, purpose, hash_password(code), now, now + ttl_seconds),
+        )
+        # Opportunistic cleanup — dead codes have no value.
+        conn.execute("DELETE FROM email_codes WHERE expires_at < ?", (now - 86400,))
+        conn.commit()
+
+
+def verify_email_code(email: str, purpose: str, code: str) -> bool:
+    """Check-and-consume the latest outstanding code. Wrong guesses count up;
+    the code burns after EMAIL_CODE_MAX_ATTEMPTS. Success marks it used."""
+    now = time.time()
+    conn = get_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT * FROM email_codes WHERE email = ? AND purpose = ? AND used = 0 "
+            "AND expires_at > ? ORDER BY id DESC LIMIT 1",
+            (email, purpose, now),
+        ).fetchone()
+        if row is None:
+            return False
+        if row["attempts"] >= EMAIL_CODE_MAX_ATTEMPTS:
+            conn.execute("UPDATE email_codes SET used = 1 WHERE id = ?", (row["id"],))
+            conn.commit()
+            return False
+        if verify_password(code, row["code_hash"]):
+            conn.execute("UPDATE email_codes SET used = 1 WHERE id = ?", (row["id"],))
+            conn.commit()
+            return True
+        conn.execute(
+            "UPDATE email_codes SET attempts = attempts + 1 WHERE id = ?", (row["id"],)
+        )
+        conn.commit()
+        return False
+
+
+def seconds_until_resend(email: str, purpose: str, min_interval: int) -> int:
+    """0 when a new code may be sent now, else remaining cooldown seconds."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT MAX(created_at) AS ts FROM email_codes WHERE email = ? AND purpose = ?",
+        (email, purpose),
+    ).fetchone()
+    if not row or row["ts"] is None:
+        return 0
+    remain = int(row["ts"] + min_interval - time.time())
+    return max(0, remain)
+
+
+def count_email_codes_today(email: str) -> int:
+    conn = get_conn()
+    day_start = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))
+    return conn.execute(
+        "SELECT COUNT(*) AS c FROM email_codes WHERE email = ? AND created_at >= ?",
+        (email, day_start),
+    ).fetchone()["c"]
+
+
+# --- subscriptions ------------------------------------------------------------
+
+
+def get_subscription(user_id: int) -> Optional[sqlite3.Row]:
+    conn = get_conn()
+    return conn.execute(
+        "SELECT * FROM subscriptions WHERE user_id = ?", (user_id,)
+    ).fetchone()
+
+
+def subscription_active(user_id: int) -> bool:
+    row = get_subscription(user_id)
+    return bool(row and row["expires_at"] > time.time())
+
+
+def extend_subscription(user_id: int, plan_code: str, days: int) -> float:
+    """Add ``days`` of membership. Extension stacks on the current expiry when
+    still active (renewing early never wastes paid days). Returns new expiry."""
+    now = time.time()
+    conn = get_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT * FROM subscriptions WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        base = row["expires_at"] if row and row["expires_at"] > now else now
+        new_expiry = base + days * 86400
+        if row is None:
+            conn.execute(
+                "INSERT INTO subscriptions (user_id, plan_code, started_at, expires_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (user_id, plan_code, now, new_expiry, now),
+            )
+        else:
+            conn.execute(
+                "UPDATE subscriptions SET plan_code = ?, expires_at = ?, updated_at = ? "
+                "WHERE user_id = ?",
+                (plan_code, new_expiry, now, user_id),
+            )
+        conn.commit()
+        return new_expiry
+
+
 # --- research jobs ----------------------------------------------------------
 
 
 def create_job(
     user_id: int, target: str, question: str,
     credits_cost: int = 0, charged_credits: int = 0,
+    strategy_id: int = 0, strategy_name: str = "",
 ) -> int:
     """Persist a new research job.
 
     ``credits_cost``   — the run's list price in points (for the record).
     ``charged_credits``— points actually deducted (0 when a free-quota run);
                          this is what a refund gives back on our-side failure.
+    ``strategy_id``    — library strategy the run uses (0 = built-in demo).
     """
     conn = get_conn()
     with _lock:
         cur = conn.execute(
             "INSERT INTO research_jobs (user_id, target, question, status, created_at, "
-            "credits_cost, charged_credits) VALUES (?, ?, ?, 'pending', ?, ?, ?)",
-            (user_id, target, question, time.time(), credits_cost, charged_credits),
+            "credits_cost, charged_credits, strategy_id, strategy_name) "
+            "VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
+            (user_id, target, question, time.time(), credits_cost, charged_credits,
+             strategy_id, strategy_name),
         )
         conn.commit()
         return cur.lastrowid
@@ -387,6 +641,116 @@ def list_pending_jobs() -> List[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM research_jobs WHERE status IN ('pending', 'running') ORDER BY created_at"
     ).fetchall()
+
+
+# --- strategy library -------------------------------------------------------
+#
+# Hot-pluggable research strategies. Plain rows keyed by user; "activation"
+# is a per-user single-choice flag flipped atomically under the module lock.
+
+
+def list_strategies(user_id: int) -> List[sqlite3.Row]:
+    conn = get_conn()
+    return conn.execute(
+        "SELECT * FROM strategies WHERE user_id = ? ORDER BY created_at DESC",
+        (user_id,),
+    ).fetchall()
+
+
+def count_strategies(user_id: int) -> int:
+    conn = get_conn()
+    return conn.execute(
+        "SELECT COUNT(*) AS c FROM strategies WHERE user_id = ?", (user_id,)
+    ).fetchone()["c"]
+
+
+def get_strategy(strategy_id: int, user_id: int) -> Optional[sqlite3.Row]:
+    """Fetch a strategy, scoped to its owner (no cross-user reads)."""
+    conn = get_conn()
+    return conn.execute(
+        "SELECT * FROM strategies WHERE id = ? AND user_id = ?",
+        (strategy_id, user_id),
+    ).fetchone()
+
+
+def get_active_strategy(user_id: int) -> Optional[sqlite3.Row]:
+    conn = get_conn()
+    return conn.execute(
+        "SELECT * FROM strategies WHERE user_id = ? AND is_active = 1",
+        (user_id,),
+    ).fetchone()
+
+
+def create_strategy(
+    user_id: int, name: str, raw_text: str, activate: bool = False
+) -> int:
+    now = time.time()
+    conn = get_conn()
+    with _lock:
+        if activate:
+            conn.execute(
+                "UPDATE strategies SET is_active = 0 WHERE user_id = ?", (user_id,)
+            )
+        cur = conn.execute(
+            "INSERT INTO strategies (user_id, name, raw_text, is_active, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, name, raw_text, 1 if activate else 0, now, now),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def update_strategy(
+    strategy_id: int, user_id: int, name: str, raw_text: str
+) -> bool:
+    """Edit an owned strategy in place. Returns False if not found / not owned."""
+    conn = get_conn()
+    with _lock:
+        cur = conn.execute(
+            "UPDATE strategies SET name = ?, raw_text = ?, updated_at = ? "
+            "WHERE id = ? AND user_id = ?",
+            (name, raw_text, time.time(), strategy_id, user_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def delete_strategy(strategy_id: int, user_id: int) -> bool:
+    conn = get_conn()
+    with _lock:
+        cur = conn.execute(
+            "DELETE FROM strategies WHERE id = ? AND user_id = ?",
+            (strategy_id, user_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def set_active_strategy(user_id: int, strategy_id: int) -> bool:
+    """Make ``strategy_id`` the user's active strategy (single-choice).
+
+    ``strategy_id = 0`` deactivates all — the built-in demo strategy applies.
+    Returns False when a non-zero id isn't an owned strategy (nothing changes).
+    """
+    conn = get_conn()
+    with _lock:
+        if strategy_id:
+            owned = conn.execute(
+                "SELECT 1 FROM strategies WHERE id = ? AND user_id = ?",
+                (strategy_id, user_id),
+            ).fetchone()
+            if owned is None:
+                return False
+        conn.execute(
+            "UPDATE strategies SET is_active = 0 WHERE user_id = ?", (user_id,)
+        )
+        if strategy_id:
+            conn.execute(
+                "UPDATE strategies SET is_active = 1, updated_at = ? WHERE id = ?",
+                (time.time(), strategy_id),
+            )
+        conn.commit()
+        return True
 
 
 # --- credits / billing ------------------------------------------------------
@@ -629,17 +993,27 @@ def list_all_orders(limit: int = 200, status: Optional[str] = None) -> List[sqli
 # --- admin views ------------------------------------------------------------
 
 
-def list_users_with_balance(limit: int = 500) -> List[sqlite3.Row]:
+def list_users_with_balance(limit: int = 500, q: str = "") -> List[sqlite3.Row]:
     conn = get_conn()
-    return conn.execute(
-        "SELECT u.id, u.username, u.is_admin, u.created_at, "
+    sql = (
+        "SELECT u.id, u.username, u.email, u.email_verified, u.disabled, "
+        "u.is_admin, u.created_at, "
         "COALESCE(a.balance, 0) AS balance, "
         "COALESCE(a.total_topup, 0) AS total_topup, "
-        "COALESCE(a.total_spent, 0) AS total_spent "
-        "FROM users u LEFT JOIN credit_accounts a ON a.user_id = u.id "
-        "ORDER BY u.id LIMIT ?",
-        (limit,),
-    ).fetchall()
+        "COALESCE(a.total_spent, 0) AS total_spent, "
+        "s.expires_at AS sub_expires_at "
+        "FROM users u "
+        "LEFT JOIN credit_accounts a ON a.user_id = u.id "
+        "LEFT JOIN subscriptions s ON s.user_id = u.id "
+    )
+    params: list = []
+    if q:
+        sql += "WHERE u.username LIKE ? OR u.email LIKE ? "
+        like = f"%{q}%"
+        params += [like, like]
+    sql += "ORDER BY u.id LIMIT ?"
+    params.append(limit)
+    return conn.execute(sql, params).fetchall()
 
 
 def admin_stats() -> Dict[str, Any]:
@@ -667,4 +1041,13 @@ def admin_stats() -> Dict[str, Any]:
         "credits_outstanding": q(
             "SELECT COALESCE(SUM(balance),0) s FROM credit_accounts"
         ).fetchone()["s"],
+        "active_subscriptions": q(
+            "SELECT COUNT(*) c FROM subscriptions WHERE expires_at > ?", (time.time(),)
+        ).fetchone()["c"],
+        "verified_users": q(
+            "SELECT COUNT(*) c FROM users WHERE email_verified = 1"
+        ).fetchone()["c"],
+        "disabled_users": q(
+            "SELECT COUNT(*) c FROM users WHERE disabled = 1"
+        ).fetchone()["c"],
     }

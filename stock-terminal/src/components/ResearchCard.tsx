@@ -13,6 +13,7 @@ import { fetchResearchRun } from "@/lib/api";
 import { fetchJobs, startResearch, type ResearchJob } from "@/lib/auth";
 import { useAuth } from "@/store/auth";
 import { useMarket } from "@/store/market";
+import { activeStrategyName, useStrategies } from "@/store/strategy";
 import type { ResearchRun } from "@/types/analysis";
 
 // AI 深度研究卡 —— 状态机:
@@ -22,7 +23,14 @@ import type { ResearchRun } from "@/types/analysis";
 export default function ResearchCard({ code, name }: { code: string; name: string }) {
   const { runs, openResearch, refreshRuns } = useMarket();
   const { config, wallet, refreshWallet } = useAuth();
+  const strategies = useStrategies();
   const run = runs[code];
+
+  // 让 CTA 能显示「将使用哪份策略」(懒加载一次,已加载则无请求)
+  useEffect(() => {
+    strategies.ensureLoaded();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [detail, setDetail] = useState<ResearchRun | null>(null);
   const [job, setJob] = useState<ResearchJob | null>(null);
@@ -186,6 +194,7 @@ export default function ResearchCard({ code, name }: { code: string; name: strin
             <div className="mt-0.5 text-2xs text-ink-3">
               {job.status === "pending" ? "任务排队中…" : "多智能体研究运行中…"}
               预计数分钟,完成后自动展示结论。
+              {job.strategy_name && <span className="ml-1">策略:{job.strategy_name}</span>}
             </div>
           </div>
           <span className="font-mono text-2xs text-ink-3">#{job.id}</span>
@@ -239,6 +248,18 @@ export default function ResearchCard({ code, name }: { code: string; name: strin
               ) : (
                 <span className="ml-1">本次消耗 {cost} 点(余额 {wallet?.balance ?? 0} 点)</span>
               )}
+              <span className="mt-0.5 block">
+                将按策略
+                <span className="mx-0.5 font-semibold text-ink-2">《{activeStrategyName(strategies)}》</span>
+                逐条核对
+                <button
+                  className="ml-1.5 cursor-pointer border-0 bg-transparent p-0 text-2xs underline"
+                  style={{ color: "var(--accent)" }}
+                  onClick={strategies.openDrawer}
+                >
+                  更换策略
+                </button>
+              </span>
             </>
           ) : (
             <>该标的尚未运行 AI 深度研究;服务器暂未配置大模型凭据,当前无法在线发起。</>

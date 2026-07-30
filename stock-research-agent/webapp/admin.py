@@ -52,17 +52,25 @@ def _user_public(row) -> dict:
     return {
         "id": row["id"],
         "username": row["username"],
+        "email": row["email"] or "",
+        "email_verified": bool(row["email_verified"]),
+        "disabled": bool(row["disabled"]),
         "is_admin": bool(row["is_admin"]),
         "created_at": row["created_at"],
         "balance": row["balance"],
         "total_topup": row["total_topup"],
         "total_spent": row["total_spent"],
+        "sub_expires_at": row["sub_expires_at"],
     }
 
 
 @router.get("/users")
-def list_users(_admin=Depends(require_admin)):
-    return [_user_public(r) for r in db.list_users_with_balance()]
+def list_users(
+    q: Optional[str] = Query(default=None, max_length=64),
+    _admin=Depends(require_admin),
+):
+    """User list with balances; ``?q=`` fuzzy-matches username or email."""
+    return [_user_public(r) for r in db.list_users_with_balance(q=(q or "").strip())]
 
 
 class CreditAdjust(BaseModel):
@@ -98,6 +106,36 @@ def set_admin(user_id: int, body: AdminFlag, admin=Depends(require_admin)):
         raise HTTPException(status_code=400, detail="不能撤销自己的管理员权限")
     db.set_user_admin(user_id, body.is_admin)
     return {"user_id": user_id, "is_admin": body.is_admin}
+
+
+class DisabledFlag(BaseModel):
+    disabled: bool
+
+
+@router.post("/users/{user_id}/disabled")
+def set_disabled(user_id: int, body: DisabledFlag, admin=Depends(require_admin)):
+    """Ban / unban an account. Banning also revokes all live sessions."""
+    target = db.get_user_by_id(user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if user_id == admin["id"] and body.disabled:
+        raise HTTPException(status_code=400, detail="不能禁用自己的账号")
+    db.set_user_disabled(user_id, body.disabled)
+    return {"user_id": user_id, "disabled": body.disabled}
+
+
+class MembershipGrant(BaseModel):
+    days: int = Field(..., ge=1, le=3650, description="赠送的会员天数")
+    memo: str = Field(default="", max_length=200)
+
+
+@router.post("/users/{user_id}/membership")
+def grant_membership(user_id: int, body: MembershipGrant, admin=Depends(require_admin)):
+    """Manually gift membership days (e.g. redeeming an off-platform 打赏)."""
+    if db.get_user_by_id(user_id) is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    expires_at = db.extend_subscription(user_id, "admin_grant", body.days)
+    return {"user_id": user_id, "sub_expires_at": expires_at, "days_added": body.days}
 
 
 # --- orders & ledger --------------------------------------------------------

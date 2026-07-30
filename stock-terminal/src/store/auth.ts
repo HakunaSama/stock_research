@@ -20,14 +20,22 @@ interface AuthState {
   ready: boolean; // 首次 bootstrap 是否完成(避免闪烁登录页)
   bootstrap: () => Promise<void>;
   refreshWallet: () => Promise<void>;
-  login: (u: string, p: string) => Promise<void>;
-  register: (u: string, p: string) => Promise<void>;
+  login: (account: string, password: string) => Promise<void>;
+  register: (email: string, code: string, password: string, username?: string) => Promise<void>;
   logout: () => Promise<void>;
+  setUser: (user: PublicUser) => void;
 }
 
 export const useAuth = create<AuthState>((set) => ({
   user: null,
-  config: { research_enabled: false, daily_quota: 0, research_cost: 1, payment_provider: "stub" },
+  config: {
+    research_enabled: false,
+    daily_quota: 0,
+    sub_daily_quota: 0,
+    research_cost: 1,
+    payment_provider: "stub",
+    email_dev_mode: false,
+  },
   wallet: null,
   ready: false,
   bootstrap: async () => {
@@ -39,13 +47,13 @@ export const useAuth = create<AuthState>((set) => ({
     const wallet = await fetchWallet();
     set({ wallet });
   },
-  login: async (u, p) => {
-    const user = await apiLogin(u, p);
+  login: async (account, password) => {
+    const user = await apiLogin(account, password);
     const wallet = await fetchWallet();
     set({ user, wallet });
   },
-  register: async (u, p) => {
-    const user = await apiRegister(u, p);
+  register: async (email, code, password, username = "") => {
+    const user = await apiRegister(email, code, password, username);
     const wallet = await fetchWallet();
     set({ user, wallet });
   },
@@ -53,4 +61,6 @@ export const useAuth = create<AuthState>((set) => ({
     await apiLogout();
     set({ user: null, wallet: null });
   },
+  // 绑定邮箱等操作后原地更新用户信息。
+  setUser: (user) => set({ user }),
 }));

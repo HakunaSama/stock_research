@@ -27,6 +27,7 @@ it up for local ``vite dev`` against a separately-running backend.
 from __future__ import annotations
 
 import os
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -37,8 +38,14 @@ from pydantic import BaseModel, Field
 from serve import _load_kline, _run_summary, _scan_runs
 
 from stock_agent import market
+from stock_agent.live_llm import load_dotenv
 
-from . import admin, auth, billing, db, jobs
+# Load .env BEFORE importing webapp modules: several of them freeze env vars
+# into module constants at import time (billing costs, session TTL, …), and
+# emailer/SMTP reads env per send. Explicitly exported vars still win.
+load_dotenv()
+
+from . import admin, auth, billing, db, emailer, jobs  # noqa: E402
 
 WORKDIR = os.environ.get("STOCK_DATA_DIR", "/tmp/stock-terminal-data")
 
@@ -84,8 +91,12 @@ def config():
     return {
         "research_enabled": jobs.research_available(),
         "daily_quota": jobs.RESEARCH_DAILY_QUOTA,
+        "sub_daily_quota": billing.sub_daily_quota(),
         "research_cost": billing.research_cost(),
         "payment_provider": billing.provider_name(),
+        # True => SMTP not configured; send-code responses carry dev_code and
+        # the SPA shows a "development mode" hint on email forms.
+        "email_dev_mode": not emailer.email_configured(),
     }
 
 
@@ -160,6 +171,8 @@ def _require_run(target: str):
 class StartResearch(BaseModel):
     target: str = Field(..., min_length=1, max_length=32)
     question: str = Field(default="", max_length=200)
+    # None → 用当前激活策略；0 → 强制内置示例；其余 → 指定自己的策略。
+    strategy_id: int | None = Field(default=None, ge=0)
 
 
 def _job_public(row) -> dict:
@@ -173,13 +186,16 @@ def _job_public(row) -> dict:
         "created_at": row["created_at"],
         "started_at": row["started_at"],
         "finished_at": row["finished_at"],
+        "strategy_id": row["strategy_id"],
+        "strategy_name": row["strategy_name"],
     }
 
 
 @app.post("/api/research/start")
 def start_research(body: StartResearch, user=Depends(auth.current_user)):
     try:
-        job_id = jobs.enqueue(user["id"], body.target, body.question)
+        job_id = jobs.enqueue(user["id"], body.target, body.question,
+                              strategy_id=body.strategy_id)
     except jobs.QuotaExceeded as e:
         raise HTTPException(status_code=429, detail=str(e))
     except jobs.InsufficientCredits as e:
@@ -187,6 +203,8 @@ def start_research(body: StartResearch, user=Depends(auth.current_user)):
         raise HTTPException(status_code=402, detail=str(e))
     except jobs.ResearchUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
+    except jobs.StrategyNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
     return _job_public(db.get_job(job_id))
 
 
@@ -195,23 +213,102 @@ def list_jobs(user=Depends(auth.current_user)):
     return [_job_public(r) for r in db.list_jobs_for_user(user["id"])]
 
 
+# --- strategy library (authenticated) ----------------------------------------
+# 策略热插拔:用户维护自己的自然语言策略,激活其一;发起研究时由管线的
+# strategy 编译器(stock_agent/strategy.py)编译成结构化规则逐条核对。
+# id=0 恒指内置示例策略(不可编辑/删除,作为无自定义策略时的回退)。
+
+MAX_STRATEGIES_PER_USER = 20
+
+
+class StrategyBody(BaseModel):
+    name: str = Field(..., min_length=1, max_length=40)
+    raw_text: str = Field(..., min_length=10, max_length=4000)
+    activate: bool = Field(default=False)
+
+
+def _strategy_public(row) -> dict:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "raw_text": row["raw_text"],
+        "is_active": bool(row["is_active"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+@app.get("/api/strategies")
+def list_strategies(user=Depends(auth.current_user)):
+    rows = db.list_strategies(user["id"])
+    active = next((r["id"] for r in rows if r["is_active"]), 0)
+    return {
+        "active_id": active,  # 0 = 内置示例
+        "builtin": {
+            "id": 0,
+            "name": jobs.DEFAULT_STRATEGY_NAME,
+            "raw_text": jobs.DEFAULT_STRATEGY_TEXT.strip(),
+        },
+        "strategies": [_strategy_public(r) for r in rows],
+    }
+
+
+@app.post("/api/strategies")
+def create_strategy(body: StrategyBody, user=Depends(auth.current_user)):
+    if db.count_strategies(user["id"]) >= MAX_STRATEGIES_PER_USER:
+        raise HTTPException(status_code=400, detail=f"策略数量已达上限（{MAX_STRATEGIES_PER_USER} 条）。")
+    sid = db.create_strategy(
+        user["id"], body.name.strip(), body.raw_text.strip(), activate=body.activate
+    )
+    return _strategy_public(db.get_strategy(sid, user["id"]))
+
+
+@app.put("/api/strategies/{sid}")
+def update_strategy(sid: int, body: StrategyBody, user=Depends(auth.current_user)):
+    if not db.update_strategy(sid, user["id"], body.name.strip(), body.raw_text.strip()):
+        raise HTTPException(status_code=404, detail="策略不存在")
+    if body.activate:
+        db.set_active_strategy(user["id"], sid)
+    return _strategy_public(db.get_strategy(sid, user["id"]))
+
+
+@app.delete("/api/strategies/{sid}")
+def delete_strategy(sid: int, user=Depends(auth.current_user)):
+    if not db.delete_strategy(sid, user["id"]):
+        raise HTTPException(status_code=404, detail="策略不存在")
+    return {"ok": True}
+
+
+@app.post("/api/strategies/{sid}/activate")
+def activate_strategy(sid: int, user=Depends(auth.current_user)):
+    """激活指定策略;sid=0 表示改用内置示例(清除所有激活位)。"""
+    if not db.set_active_strategy(user["id"], sid):
+        raise HTTPException(status_code=404, detail="策略不存在")
+    return {"ok": True, "active_id": sid}
+
+
 # --- wallet / billing (authenticated) ---------------------------------------
 
 
 def _free_left(user_id: int) -> int:
     used = db.count_free_jobs_since(user_id, jobs._day_start_ts())  # noqa: SLF001
-    return max(0, jobs.RESEARCH_DAILY_QUOTA - used)
+    return max(0, jobs.daily_quota_for(user_id) - used)
 
 
 @app.get("/api/wallet")
 def wallet(user=Depends(auth.current_user)):
-    """The current user's balance + today's remaining free runs."""
+    """Balance + today's remaining free runs + membership state."""
     acct = db.get_account(user["id"])
+    sub = db.get_subscription(user["id"])
+    sub_active = bool(sub and sub["expires_at"] > time.time())
     return {
         **acct,
         "free_left": _free_left(user["id"]),
-        "daily_quota": jobs.RESEARCH_DAILY_QUOTA,
+        "daily_quota": jobs.daily_quota_for(user["id"]),
         "research_cost": billing.research_cost(),
+        "sub_active": sub_active,
+        "sub_expires_at": sub["expires_at"] if sub else None,
+        "sub_plan_code": sub["plan_code"] if sub else "",
     }
 
 

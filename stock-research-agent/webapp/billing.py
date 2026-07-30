@@ -40,10 +40,17 @@ from . import db
 RESEARCH_CREDIT_COST = int(os.environ.get("RESEARCH_CREDIT_COST", 1))
 # Points gifted to a brand-new account (0 = none; keep low to deter abuse).
 SIGNUP_BONUS_CREDITS = int(os.environ.get("SIGNUP_BONUS_CREDITS", 0))
+# Free daily research runs for ACTIVE subscribers (vs. the base quota in
+# jobs.py). The subscription's core value: more free runs every day.
+SUB_DAILY_QUOTA = int(os.environ.get("SUB_DAILY_QUOTA", 20))
 
 
 def research_cost() -> int:
     return max(0, RESEARCH_CREDIT_COST)
+
+
+def sub_daily_quota() -> int:
+    return max(0, SUB_DAILY_QUOTA)
 
 
 # --- plans (credit packs + monthly cards) -----------------------------------
@@ -51,11 +58,15 @@ def research_cost() -> int:
 # Prices are in cents to avoid float rounding. ``credits`` is how many research
 # points the purchase grants. Edit freely — this is your price list.
 
+# ``days`` (monthly kind only) = membership duration granted per purchase; an
+# active membership raises the free daily quota to SUB_DAILY_QUOTA. Monthly
+# plans may ALSO grant points (``credits``) as a purchase bonus.
 PLANS: List[Dict] = [
-    {"code": "pack_10",  "name": "体验包",   "kind": "pack",    "credits": 10,  "amount_cents": 990,   "desc": "10 次深度研究"},
-    {"code": "pack_50",  "name": "标准包",   "kind": "pack",    "credits": 50,  "amount_cents": 3900,  "desc": "50 次深度研究（约 8 折）"},
-    {"code": "pack_200", "name": "超值包",   "kind": "pack",    "credits": 200, "amount_cents": 12900, "desc": "200 次深度研究（约 65 折）"},
-    {"code": "month",    "name": "月卡",     "kind": "monthly", "credits": 100, "amount_cents": 6800,  "desc": "一次到账 100 点，适合高频使用"},
+    {"code": "pack_10",  "name": "体验包", "kind": "pack",    "credits": 10,  "amount_cents": 990,   "desc": "10 次深度研究"},
+    {"code": "pack_50",  "name": "标准包", "kind": "pack",    "credits": 50,  "amount_cents": 3900,  "desc": "50 次深度研究（约 8 折）"},
+    {"code": "pack_200", "name": "超值包", "kind": "pack",    "credits": 200, "amount_cents": 12900, "desc": "200 次深度研究（约 65 折）"},
+    {"code": "month",    "name": "会员月卡", "kind": "monthly", "credits": 30, "days": 30, "amount_cents": 6800,
+     "desc": f"30 天会员：每日免费额度提升至 {SUB_DAILY_QUOTA} 次，另赠 30 点"},
 ]
 
 _PLAN_BY_CODE = {p["code"]: p for p in PLANS}
@@ -171,11 +182,17 @@ def create_topup_order(user_id: int, plan_code: str) -> Dict:
 
 
 def settle_order(out_trade_no: str, channel_txid: str = "") -> Optional[Dict]:
-    """Mark an order paid and credit points (idempotent). Returns the order dict
-    on the paid transition, or None if already settled / unknown."""
+    """Mark an order paid and credit points (idempotent). Monthly plans also
+    extend the buyer's membership. Returns the order dict on the paid
+    transition, or None if already settled / unknown."""
     row = db.mark_order_paid(out_trade_no, channel_txid)
     if row is None:
         return None
+    plan = get_plan(row["plan_code"])
+    if plan and plan["kind"] == "monthly":
+        # Rides on mark_order_paid's exactly-once transition, so a replayed
+        # callback can never stack membership days twice.
+        db.extend_subscription(row["user_id"], plan["code"], int(plan.get("days", 30)))
     return dict(row)
 
 

@@ -25,9 +25,17 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-0}      # keep 0 on plain HTTP; set 1 with HTTPS
       RESEARCH_WORKERS: ${RESEARCH_WORKERS:-1}
       RESEARCH_DAILY_QUOTA: ${RESEARCH_DAILY_QUOTA:-5}
-      # Billing / credits.
+      # Email verification codes (empty = dev mode: code echoed in response).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_SSL: ${SMTP_SSL:-1}
+      # Billing / credits / membership.
       RESEARCH_CREDIT_COST: ${RESEARCH_CREDIT_COST:-1}
       SIGNUP_BONUS_CREDITS: ${SIGNUP_BONUS_CREDITS:-0}
+      SUB_DAILY_QUOTA: ${SUB_DAILY_QUOTA:-20}
       PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-stub}
     volumes:
       - stock-data:/data

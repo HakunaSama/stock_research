@@ -16,6 +16,8 @@ import {
   adminFetchOrders,
   adminFetchStats,
   adminFetchUsers,
+  adminGrantMembership,
+  adminSetDisabled,
 } from "@/lib/auth";
 import { fmtCents, fmtTs } from "@/lib/utils";
 
@@ -48,14 +50,15 @@ export default function Admin() {
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [query, setQuery] = useState(""); // 用户名/邮箱模糊搜索
 
-  async function reload() {
+  async function reload(q = query) {
     setLoading(true);
     setErr("");
     try {
       const [s, u, o, l] = await Promise.all([
         adminFetchStats(),
-        adminFetchUsers(),
+        adminFetchUsers(q),
         adminFetchOrders(),
         adminFetchLedger(),
       ]);
@@ -92,6 +95,35 @@ export default function Admin() {
       await reload();
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "调整失败");
+    }
+  }
+
+  // 赠送会员天数(站外打赏兑换等场景)。
+  async function onGrantMembership(u: AdminUser) {
+    const raw = window.prompt(`为用户「${u.username}」赠送会员天数:`, "30");
+    if (raw === null) return;
+    const days = parseInt(raw.trim(), 10);
+    if (!Number.isFinite(days) || days <= 0) {
+      window.alert("请输入正整数天数");
+      return;
+    }
+    try {
+      await adminGrantMembership(u.id, days);
+      await reload();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "操作失败");
+    }
+  }
+
+  // 禁用/解禁账号;禁用会立刻踢下线。
+  async function onToggleDisabled(u: AdminUser) {
+    const verb = u.disabled ? "解禁" : "禁用";
+    if (!window.confirm(`确认${verb}用户「${u.username}」?${u.disabled ? "" : "禁用后将立即踢下线。"}`)) return;
+    try {
+      await adminSetDisabled(u.id, !u.disabled);
+      await reload();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "操作失败");
     }
   }
 
@@ -150,7 +182,12 @@ export default function Admin() {
           {/* 概览 */}
           {tab === "overview" && stats && (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <StatCard label="总用户" value={String(stats.total_users)} />
+              <StatCard
+                label="总用户"
+                value={String(stats.total_users)}
+                sub={`已验证邮箱 ${stats.verified_users} · 禁用 ${stats.disabled_users}`}
+              />
+              <StatCard label="有效会员" value={String(stats.active_subscriptions)} sub="订阅生效中的账号" />
               <StatCard label="累计研究" value={String(stats.total_jobs)} sub={`今日 ${stats.jobs_today} · 运行中 ${stats.jobs_running}`} />
               <StatCard label="已支付订单" value={String(stats.paid_orders)} />
               <StatCard label="累计营收" value={fmtCents(stats.revenue_cents)} sub={`今日 ${fmtCents(stats.revenue_today_cents)}`} />
@@ -160,47 +197,119 @@ export default function Admin() {
 
           {/* 用户 */}
           {tab === "users" && (
-            <div className="overflow-hidden rounded-lg border border-subtle bg-panel">
-              <table className="w-full text-xs">
-                <thead className="text-ink-3">
-                  <tr className="border-b border-subtle">
-                    <th className="px-3 py-2 text-left font-500">ID</th>
-                    <th className="px-3 py-2 text-left font-500">用户名</th>
-                    <th className="px-3 py-2 text-right font-500">余额</th>
-                    <th className="px-3 py-2 text-right font-500">累计充值</th>
-                    <th className="px-3 py-2 text-right font-500">累计消耗</th>
-                    <th className="px-3 py-2 text-center font-500">角色</th>
-                    <th className="px-3 py-2 text-right font-500">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="font-mono text-ink-2">
-                  {users.map((u) => (
-                    <tr key={u.id} className="border-b border-subtle/50 last:border-0">
-                      <td className="px-3 py-2">{u.id}</td>
-                      <td className="px-3 py-2 font-sans">{u.username}</td>
-                      <td className="px-3 py-2 text-right font-600 text-ink">{u.balance}</td>
-                      <td className="px-3 py-2 text-right">{u.total_topup}</td>
-                      <td className="px-3 py-2 text-right">{u.total_spent}</td>
-                      <td className="px-3 py-2 text-center font-sans">
-                        {u.is_admin ? (
-                          <span style={{ color: "var(--accent)" }}>管理员</span>
-                        ) : (
-                          <span className="text-ink-3">普通</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <button
-                          onClick={() => void onAdjust(u)}
-                          className="rounded-sm border border-subtle px-2 py-0.5 font-sans text-2xs text-ink-2 transition-colors hover:border-strong hover:text-ink"
-                        >
-                          充值/扣减
-                        </button>
-                      </td>
+            <>
+              {/* 搜索:用户名 / 邮箱模糊匹配 */}
+              <form
+                className="mb-3 flex gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void reload();
+                }}
+              >
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="按用户名或邮箱搜索…"
+                  className="w-64 rounded-md border border-subtle bg-panel px-3 py-1.5 text-xs text-ink outline-none focus:border-strong"
+                />
+                <button
+                  type="submit"
+                  className="rounded-md border border-subtle bg-panel px-3 py-1.5 text-xs text-ink-2 transition-colors hover:border-strong hover:text-ink"
+                >
+                  搜索
+                </button>
+              </form>
+              <div className="overflow-x-auto rounded-lg border border-subtle bg-panel">
+                <table className="w-full text-xs">
+                  <thead className="text-ink-3">
+                    <tr className="border-b border-subtle">
+                      <th className="px-3 py-2 text-left font-500">ID</th>
+                      <th className="px-3 py-2 text-left font-500">用户名</th>
+                      <th className="px-3 py-2 text-left font-500">邮箱</th>
+                      <th className="px-3 py-2 text-right font-500">余额</th>
+                      <th className="px-3 py-2 text-center font-500">会员</th>
+                      <th className="px-3 py-2 text-center font-500">角色</th>
+                      <th className="px-3 py-2 text-center font-500">状态</th>
+                      <th className="px-3 py-2 text-right font-500">操作</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="font-mono text-ink-2">
+                    {users.map((u) => {
+                      const subActive = u.sub_expires_at != null && u.sub_expires_at * 1000 > Date.now();
+                      return (
+                        <tr key={u.id} className="border-b border-subtle/50 last:border-0">
+                          <td className="px-3 py-2">{u.id}</td>
+                          <td className="px-3 py-2 font-sans">{u.username}</td>
+                          <td className="px-3 py-2 font-sans text-2xs">
+                            {u.email ? (
+                              <span>
+                                {u.email}
+                                {u.email_verified && (
+                                  <span className="ml-1" style={{ color: "#00a05a" }}>✓</span>
+                                )}
+                              </span>
+                            ) : (
+                              <span className="text-ink-3">未绑定</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right font-600 text-ink">{u.balance}</td>
+                          <td className="px-3 py-2 text-center font-sans text-2xs">
+                            {subActive ? (
+                              <span style={{ color: "var(--accent)" }}>
+                                至 {fmtTs(u.sub_expires_at as number).slice(0, 10)}
+                              </span>
+                            ) : (
+                              <span className="text-ink-3">-</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-center font-sans">
+                            {u.is_admin ? (
+                              <span style={{ color: "var(--accent)" }}>管理员</span>
+                            ) : (
+                              <span className="text-ink-3">普通</span>
+                            )}
+                          </td>
+                          {/* 状态用语义色(绿=正常/红=禁用),别用行情涨跌色(A股红涨绿跌) */}
+                          <td className="px-3 py-2 text-center font-sans">
+                            {u.disabled ? (
+                              <span style={{ color: "#e5484d" }}>已禁用</span>
+                            ) : (
+                              <span style={{ color: "#00a05a" }}>正常</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <div className="flex justify-end gap-1.5">
+                              <button
+                                onClick={() => void onAdjust(u)}
+                                className="rounded-sm border border-subtle px-2 py-0.5 font-sans text-2xs text-ink-2 transition-colors hover:border-strong hover:text-ink"
+                              >
+                                点数
+                              </button>
+                              <button
+                                onClick={() => void onGrantMembership(u)}
+                                className="rounded-sm border border-subtle px-2 py-0.5 font-sans text-2xs text-ink-2 transition-colors hover:border-strong hover:text-ink"
+                              >
+                                赠会员
+                              </button>
+                              <button
+                                onClick={() => void onToggleDisabled(u)}
+                                className="rounded-sm border px-2 py-0.5 font-sans text-2xs transition-colors"
+                                style={{
+                                  borderColor: u.disabled ? "var(--border-subtle)" : "#e5484d",
+                                  color: u.disabled ? "var(--text-secondary)" : "#e5484d",
+                                }}
+                              >
+                                {u.disabled ? "解禁" : "禁用"}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
 
           {/* 订单 */}

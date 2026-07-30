@@ -59,6 +59,8 @@ vim .env
 | `RESEARCH_DAILY_QUOTA` | 每用户**每日免费**研究次数，用完后从点数余额扣 |
 | `RESEARCH_CREDIT_COST` | 单次深度研究消耗的点数（免费额度用完后生效） |
 | `SIGNUP_BONUS_CREDITS` | 新用户注册赠送点数，默认 `0`（不送） |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` | **邮箱验证码**（注册 / 找回密码 / 绑定邮箱）的 SMTP 发信配置。**留空 = 开发模式**：验证码打进服务端日志并随接口回显（`dev_code`），仅供本地联调，**上线必须配好**。QQ 邮箱用「授权码」当 `SMTP_PASS` |
+| `SUB_DAILY_QUOTA` | **会员**（订阅生效中）每日免费研究次数，默认 `20`（普通用户走 `RESEARCH_DAILY_QUOTA`） |
 | `PAYMENT_PROVIDER` | 支付渠道，默认 `stub`（占位，下单即模拟支付成功）。接真实渠道后改名（见「六、计费与充值」） |
 
 > `.env` 已被 `.gitignore` 忽略，**绝不会提交**。真实 key 只存在于服务器本地。

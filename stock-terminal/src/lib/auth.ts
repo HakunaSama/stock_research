@@ -7,14 +7,18 @@ import { API_BASE } from "@/lib/api";
 export interface PublicUser {
   id: number;
   username: string;
+  email: string;
+  email_verified: boolean;
   is_admin: boolean;
 }
 
 export interface AppConfig {
   research_enabled: boolean;
   daily_quota: number;
+  sub_daily_quota: number;
   research_cost: number;
   payment_provider: string;
+  email_dev_mode: boolean; // SMTP 未配置:验证码直接回显(仅开发环境)
 }
 
 export interface Wallet {
@@ -24,6 +28,9 @@ export interface Wallet {
   free_left: number;
   daily_quota: number;
   research_cost: number;
+  sub_active: boolean;
+  sub_expires_at: number | null;
+  sub_plan_code: string;
 }
 
 export interface Plan {
@@ -31,6 +38,7 @@ export interface Plan {
   name: string;
   kind: "pack" | "monthly";
   credits: number;
+  days?: number; // monthly 套餐赠送的会员天数
   amount_cents: number;
   desc: string;
 }
@@ -83,10 +91,12 @@ export interface ResearchJob {
   created_at: number;
   started_at: number | null;
   finished_at: number | null;
+  strategy_id: number;
+  strategy_name: string;
 }
 
 // 统一请求封装:JSON body、带 cookie、把后端 detail 作为错误抛出。
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
+export async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -105,17 +115,72 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export function register(username: string, password: string): Promise<PublicUser> {
-  return req<PublicUser>("/api/auth/register", {
+export type CodePurpose = "register" | "reset" | "bind";
+
+export interface SendCodeResult {
+  ok: boolean;
+  ttl_seconds: number;
+  resend_after: number;
+  dev_code?: string; // 仅开发模式(未配置 SMTP)返回
+}
+
+// 发送邮箱验证码(注册 / 找回密码 / 绑定邮箱)。
+export function sendEmailCode(email: string, purpose: CodePurpose): Promise<SendCodeResult> {
+  return req<SendCodeResult>("/api/auth/send-code", {
     method: "POST",
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ email, purpose }),
   });
 }
 
-export function login(username: string, password: string): Promise<PublicUser> {
+// 邮箱注册:邮箱 + 验证码 + 密码(用户名可选,缺省由邮箱前缀生成)。
+export function register(
+  email: string,
+  code: string,
+  password: string,
+  username = "",
+): Promise<PublicUser> {
+  return req<PublicUser>("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ email, code, password, username }),
+  });
+}
+
+// 登录:account 可以是邮箱或用户名。
+export function login(account: string, password: string): Promise<PublicUser> {
   return req<PublicUser>("/api/auth/login", {
     method: "POST",
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ account, password }),
+  });
+}
+
+// 找回密码:邮箱 + 验证码 + 新密码;成功后所有会话失效,需重新登录。
+export function resetPassword(
+  email: string,
+  code: string,
+  newPassword: string,
+): Promise<{ ok: boolean }> {
+  return req<{ ok: boolean }>("/api/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ email, code, new_password: newPassword }),
+  });
+}
+
+// 修改密码(已登录):校验原密码,踢掉除当前外的其他会话。
+export function changePassword(
+  oldPassword: string,
+  newPassword: string,
+): Promise<{ ok: boolean }> {
+  return req<{ ok: boolean }>("/api/auth/change-password", {
+    method: "POST",
+    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+  });
+}
+
+// 绑定 / 换绑邮箱(已登录,老账号补绑用)。
+export function bindEmail(email: string, code: string): Promise<PublicUser> {
+  return req<PublicUser>("/api/auth/bind-email", {
+    method: "POST",
+    body: JSON.stringify({ email, code }),
   });
 }
 
@@ -137,7 +202,14 @@ export async function fetchConfig(): Promise<AppConfig> {
   try {
     return await req<AppConfig>("/api/config");
   } catch {
-    return { research_enabled: false, daily_quota: 0, research_cost: 1, payment_provider: "stub" };
+    return {
+      research_enabled: false,
+      daily_quota: 0,
+      sub_daily_quota: 0,
+      research_cost: 1,
+      payment_provider: "stub",
+      email_dev_mode: false,
+    };
   }
 }
 
@@ -202,24 +274,55 @@ export interface AdminStats {
   revenue_cents: number;
   revenue_today_cents: number;
   credits_outstanding: number;
+  active_subscriptions: number;
+  verified_users: number;
+  disabled_users: number;
 }
 
 export interface AdminUser {
   id: number;
   username: string;
+  email: string;
+  email_verified: boolean;
+  disabled: boolean;
   is_admin: boolean;
   created_at: number;
   balance: number;
   total_topup: number;
   total_spent: number;
+  sub_expires_at: number | null;
 }
 
 export function adminFetchStats(): Promise<AdminStats> {
   return req<AdminStats>("/api/admin/stats");
 }
 
-export function adminFetchUsers(): Promise<AdminUser[]> {
-  return req<AdminUser[]>("/api/admin/users");
+export function adminFetchUsers(q = ""): Promise<AdminUser[]> {
+  const qs = q ? `?q=${encodeURIComponent(q)}` : "";
+  return req<AdminUser[]>(`/api/admin/users${qs}`);
+}
+
+// 禁用 / 解禁账号(禁用会立刻踢下线)。
+export function adminSetDisabled(
+  userId: number,
+  disabled: boolean,
+): Promise<{ user_id: number; disabled: boolean }> {
+  return req<{ user_id: number; disabled: boolean }>(`/api/admin/users/${userId}/disabled`, {
+    method: "POST",
+    body: JSON.stringify({ disabled }),
+  });
+}
+
+// 手动赠送会员天数(站外打赏兑换等场景)。
+export function adminGrantMembership(
+  userId: number,
+  days: number,
+  memo = "",
+): Promise<{ user_id: number; sub_expires_at: number; days_added: number }> {
+  return req<{ user_id: number; sub_expires_at: number; days_added: number }>(
+    `/api/admin/users/${userId}/membership`,
+    { method: "POST", body: JSON.stringify({ days, memo }) },
+  );
 }
 
 export function adminAdjustCredits(
