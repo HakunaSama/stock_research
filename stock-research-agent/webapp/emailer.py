@@ -47,12 +47,15 @@ def _smtp_config() -> Optional[dict]:
     password = os.environ.get("SMTP_PASS", "").strip()
     if not (host and user and password):
         return None
+    # Compose may inject SMTP_FROM="" even when unset; empty From makes QQ
+    # SMTP reply 502 "Invalid paramenters". Always fall back to SMTP_USER.
+    from_addr = os.environ.get("SMTP_FROM", "").strip() or user
     return {
         "host": host,
         "port": int(os.environ.get("SMTP_PORT", 465)),
         "user": user,
         "password": password,
-        "from": os.environ.get("SMTP_FROM", user).strip(),
+        "from": from_addr,
         "ssl": os.environ.get("SMTP_SSL", "1") in ("1", "true", "True"),
     }
 
@@ -94,9 +97,10 @@ def send_code(to_email: str, purpose: str, code: str, ttl_minutes: int = 10) -> 
 
     subject, body = _render_code_mail(purpose, code, ttl_minutes)
     msg = MIMEText(body, "plain", "utf-8")
+    # Encode headers explicitly — QQ SMTP is picky about bare non-ASCII / empty From.
     msg["Subject"] = Header(subject, "utf-8")
     msg["From"] = formataddr((str(Header(APP_NAME, "utf-8")), cfg["from"]))
-    msg["To"] = to_email
+    msg["To"] = formataddr(("", to_email))
 
     try:
         # smtplib is not thread-safe per-connection; serialize sends (low volume).
@@ -108,9 +112,13 @@ def send_code(to_email: str, purpose: str, code: str, ttl_minutes: int = 10) -> 
                 server.starttls()
             try:
                 server.login(cfg["user"], cfg["password"])
+                # Envelope sender must match the authenticated QQ mailbox.
                 server.sendmail(cfg["from"], [to_email], msg.as_string())
             finally:
-                server.quit()
+                try:
+                    server.quit()
+                except Exception:  # noqa: BLE001
+                    server.close()
     except Exception as e:  # noqa: BLE001 — surface any transport failure uniformly
         log.error("send email to %s failed: %s", to_email, e)
         raise EmailError(f"邮件发送失败：{e}") from e
