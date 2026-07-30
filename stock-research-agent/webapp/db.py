@@ -260,7 +260,6 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_ledger_user ON credit_ledger(user_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_strategies_user ON strategies(user_id, created_at);
-        CREATE INDEX IF NOT EXISTS idx_strategies_public ON strategies(is_public, published_at);
         CREATE INDEX IF NOT EXISTS idx_strategy_tags_tag ON strategy_tags(tag);
         CREATE INDEX IF NOT EXISTS idx_strategy_comments ON strategy_comments(strategy_id, created_at);
         """
