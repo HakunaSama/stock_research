@@ -1,4 +1,4 @@
-# Production stack for the Stock Research Terminal.
+# Production stack for 知势 Cheese.
 #
 #   nginx (frontend)  :  serves the built SPA + reverse-proxies /api → backend
 #   backend (FastAPI) :  auth + read-only run data + online research job queue
@@ -25,6 +25,8 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-0}      # keep 0 on plain HTTP; set 1 with HTTPS
       RESEARCH_WORKERS: ${RESEARCH_WORKERS:-1}
       RESEARCH_DAILY_QUOTA: ${RESEARCH_DAILY_QUOTA:-5}
+      # Product display name (verification email subject, etc.).
+      APP_NAME: ${APP_NAME:-知势}
       # Email verification codes (empty = dev mode: code echoed in response).
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-465}

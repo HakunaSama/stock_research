@@ -6,12 +6,12 @@ import {
   LockOutlined,
   MailOutlined,
   SafetyOutlined,
-  StockOutlined,
   UserOutlined,
 } from "@ant-design/icons";
 import { resetPassword, sendEmailCode } from "@/lib/auth";
 import type { CodePurpose } from "@/lib/auth";
 import { useAuth } from "@/store/auth";
+import BrandMark from "@/components/BrandMark";
 
 type Mode = "login" | "register" | "reset";
 
@@ -162,17 +162,8 @@ export default function Login() {
         className="w-full max-w-sm"
       >
         <Card styles={{ body: { padding: 24 } }} style={{ boxShadow: "var(--shadow-pop)" }}>
-          <div className="mb-5 flex items-center gap-2.5">
-            <div
-              className="flex h-9 w-9 items-center justify-center rounded-md"
-              style={{ background: "var(--accent-dim)", boxShadow: "inset 0 0 0 1px rgba(130,71,255,0.35)" }}
-            >
-              <StockOutlined style={{ fontSize: 18, color: "var(--accent)" }} />
-            </div>
-            <div>
-              <div className="font-display text-base font-bold tracking-wide text-ink">AI 投研终端</div>
-              <div className="text-2xs uppercase tracking-[0.22em] text-ink-3">Stock Research Terminal</div>
-            </div>
+          <div className="mb-5">
+            <BrandMark size="lg" />
           </div>
 
           {mode !== "reset" && (

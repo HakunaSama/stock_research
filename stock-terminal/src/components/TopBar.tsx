@@ -6,7 +6,6 @@ import {
   SafetyOutlined,
   ShopOutlined,
   SlidersOutlined,
-  StockOutlined,
   UserOutlined,
   WalletOutlined,
 } from "@ant-design/icons";
@@ -16,6 +15,7 @@ import { useAuth } from "@/store/auth";
 import { useMarket } from "@/store/market";
 import { useStrategies } from "@/store/strategy";
 import AccountModal from "./AccountModal";
+import BrandMark from "./BrandMark";
 import SearchBox from "./SearchBox";
 import StrategyDrawer from "./StrategyDrawer";
 
@@ -74,22 +74,9 @@ export default function TopBar() {
   return (
     <header className="relative z-30 flex items-center justify-between gap-4 border-b border-subtle bg-panel/85 px-4 py-2 backdrop-blur-md">
       {/* 品牌 */}
-      <div className="flex shrink-0 items-center gap-2.5">
-        <div
-          className="flex h-8 w-8 items-center justify-center rounded-md"
-          style={{ background: "var(--accent-dim)", boxShadow: "inset 0 0 0 1px rgba(130,71,255,0.35)" }}
-        >
-          <StockOutlined style={{ fontSize: 16, color: "var(--accent)" }} />
-        </div>
-        <div>
-          <div className="font-display text-[14px] font-bold tracking-wide text-ink">
-            AI 投研终端
-          </div>
-          <div className="text-2xs uppercase tracking-[0.22em] text-ink-3">
-            Stock Research Terminal
-          </div>
-        </div>
-      </div>
+      <Link to="/" className="flex shrink-0 items-center no-underline">
+        <BrandMark size="sm" />
+      </Link>
 
       {/* 实时指数条 */}
       <div className="flex min-w-0 flex-1 items-center gap-5 overflow-hidden pl-2">

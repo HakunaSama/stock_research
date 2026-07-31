@@ -28,7 +28,7 @@ from typing import Optional
 
 log = logging.getLogger("webapp.emailer")
 
-APP_NAME = os.environ.get("APP_NAME", "AI 投研终端")
+APP_NAME = os.environ.get("APP_NAME", "知势")
 
 _PURPOSE_LABEL = {
     "register": "注册账号",

@@ -1,4 +1,4 @@
-# Stock Research Agent
+# 知势 Cheese · Research Agent
 
 A **stock-research add-on** for the [Nous Research hermes-agent](https://github.com/nousresearch/hermes-agent)
 framework. It turns a raw trading strategy + market research + K-line into a

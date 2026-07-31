@@ -61,7 +61,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Stock Research Terminal", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="知势 Cheese", version="1.0.0", lifespan=lifespan)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(hall.router)

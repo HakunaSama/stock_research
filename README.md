@@ -1,4 +1,4 @@
-# autoresearch · Stock Research Agent + Terminal
+# 知势 Cheese · 投研智能体 + 量化终端
 
 > 一个**自主股票研究**的全栈实验：纯 Python 的多智能体研究引擎 + 一个深色系量化决策终端前端。
 > 底座沿用了 [@karpathy 的 autoresearch](#-appendix-the-original-autoresearch-llm-training-playground) 自主研究理念，把它从"AI 自己训练 LLM"迁移到"AI 自己做投研"。
