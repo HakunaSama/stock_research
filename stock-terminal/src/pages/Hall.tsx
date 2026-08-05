@@ -18,6 +18,7 @@ import {
   HeartOutlined,
   StarFilled,
   StarOutlined,
+  SlidersOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
 import {
@@ -36,12 +37,14 @@ import {
 } from "@/lib/strategy";
 import { useStrategies } from "@/store/strategy";
 import { fmtTs } from "@/lib/utils";
+import StrategyDrawer from "@/components/StrategyDrawer";
 
 type Tab = "hall" | "favorites";
 
 export default function Hall() {
   const { message } = App.useApp();
   const refreshMine = useStrategies((s) => s.refresh);
+  const openStrategies = useStrategies((s) => s.openDrawer);
 
   const [tab, setTab] = useState<Tab>("hall");
   const [sort, setSort] = useState<HallSort>("hot");
@@ -166,21 +169,26 @@ export default function Hall() {
 
   return (
     <div className="relative z-10 mx-auto h-screen max-w-5xl overflow-y-auto p-5">
-      <div className="mb-4 flex items-center justify-between gap-3">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Link to="/" className="flex items-center gap-1 text-xs text-ink-3 hover:text-ink">
             <ArrowLeftOutlined /> 返回终端
           </Link>
           <h1 className="m-0 font-display text-xl font-700 text-ink">策略大厅</h1>
         </div>
-        <Segmented
-          value={tab}
-          onChange={(v) => setTab(v as Tab)}
-          options={[
-            { label: "发现", value: "hall" },
-            { label: "我的收藏", value: "favorites" },
-          ]}
-        />
+        <div className="flex items-center gap-2">
+          <Segmented
+            value={tab}
+            onChange={(v) => setTab(v as Tab)}
+            options={[
+              { label: "发现", value: "hall" },
+              { label: "我的收藏", value: "favorites" },
+            ]}
+          />
+          <Button icon={<SlidersOutlined />} onClick={openStrategies}>
+            我的策略
+          </Button>
+        </div>
       </div>
 
       {tab === "hall" && (
@@ -242,7 +250,7 @@ export default function Hall() {
             <span className="text-xs text-ink-3">
               {tab === "favorites"
                 ? "还没有收藏，去大厅逛逛吧"
-                : "大厅还没有公开策略。打开右上角「策略库」，创建后打开「发布大厅」。"}
+                : "大厅还没有公开策略。打开「我的策略」，创建策略后即可发布到大厅。"}
             </span>
           }
         />
@@ -412,6 +420,7 @@ export default function Hall() {
           </>
         )}
       </Drawer>
+      <StrategyDrawer />
     </div>
   );
 }

@@ -1,10 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Avatar, Button, Dropdown, Tag, Tooltip } from "antd";
 import {
   CrownOutlined,
   LogoutOutlined,
   SafetyOutlined,
-  ShopOutlined,
   SlidersOutlined,
   UserOutlined,
   WalletOutlined,
@@ -13,34 +12,28 @@ import { Link, useNavigate } from "react-router-dom";
 import { dirColor, signPct } from "@/lib/utils";
 import { useAuth } from "@/store/auth";
 import { useMarket } from "@/store/market";
-import { useStrategies } from "@/store/strategy";
+import { activeStrategyName, useStrategies } from "@/store/strategy";
 import AccountModal from "./AccountModal";
 import BrandMark from "./BrandMark";
 import SearchBox from "./SearchBox";
 import StrategyDrawer from "./StrategyDrawer";
 
-// 顶栏 —— 品牌 / 实时大盘指数 / 全局搜索 / 策略库 / 钱包与账户(antd Dropdown 菜单)。
+// 顶栏 —— 品牌 / 实时大盘指数 / 独立策略中心 / 全局搜索 / 钱包与账户。
 export default function TopBar() {
   const { user, wallet, logout } = useAuth();
   const indices = useMarket((s) => s.indices);
   const lastUpdated = useMarket((s) => s.lastUpdated);
   const openStrategies = useStrategies((s) => s.openDrawer);
+  const ensureStrategiesLoaded = useStrategies((s) => s.ensureLoaded);
+  const strategyName = useStrategies(activeStrategyName);
   const navigate = useNavigate();
   const [accountOpen, setAccountOpen] = useState(false);
 
+  useEffect(() => {
+    ensureStrategiesLoaded();
+  }, [ensureStrategiesLoaded]);
+
   const menuItems = [
-    {
-      key: "strategies",
-      icon: <SlidersOutlined />,
-      label: "策略库（热插拔）",
-      onClick: openStrategies,
-    },
-    {
-      key: "hall",
-      icon: <ShopOutlined />,
-      label: "策略大厅",
-      onClick: () => navigate("/hall"),
-    },
     {
       key: "account",
       icon: <SafetyOutlined />,
@@ -104,6 +97,31 @@ export default function TopBar() {
           </span>
         )}
       </div>
+
+      {/* 策略中心：从账户菜单提升为独立、持续可见的一级入口 */}
+      <nav
+        aria-label="策略中心"
+        className="flex shrink-0 items-center rounded-md border border-subtle bg-panel-2 p-0.5 shadow-sm"
+      >
+        <Link
+          to="/hall"
+          className="flex h-8 items-center gap-1.5 rounded-[7px] px-3 text-xs font-semibold text-ink-2 no-underline transition-colors hover:bg-elevated hover:text-ink"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+          策略大厅
+        </Link>
+        <span className="h-4 w-px bg-subtle" aria-hidden="true" />
+        <Tooltip title={`当前使用：${strategyName}`}>
+          <button
+            type="button"
+            className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-[7px] border-0 bg-transparent px-3 text-xs font-semibold text-ink-2 transition-colors hover:bg-elevated hover:text-ink"
+            onClick={openStrategies}
+          >
+            <SlidersOutlined style={{ color: "var(--accent)" }} />
+            <span>我的策略</span>
+          </button>
+        </Tooltip>
+      </nav>
 
       {/* 搜索 + 账户 */}
       <div className="flex shrink-0 items-center gap-3">

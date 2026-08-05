@@ -20,6 +20,7 @@ const MA60 = "#d97706";
 interface Props {
   data: KlineData;
   maxBars?: number;
+  height?: number;
 }
 
 function movingAvg(closes: number[], window: number): (number | null)[] {
@@ -31,7 +32,7 @@ function movingAvg(closes: number[], window: number): (number | null)[] {
   });
 }
 
-export default function KlineChart({ data, maxBars = 120 }: Props) {
+export default function KlineChart({ data, maxBars = 120, height = 360 }: Props) {
   const bars = useMemo(() => data.bars.slice(-maxBars), [data.bars, maxBars]);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
@@ -39,8 +40,8 @@ export default function KlineChart({ data, maxBars = 120 }: Props) {
   const geom = useMemo(() => {
     if (bars.length === 0) return null;
     const W = 640;
-    const H = 280;
-    const volH = 52;
+    const H = height;
+    const volH = Math.max(52, Math.round(height * 0.18));
     const padL = 6;
     const padR = 48; // 右侧价格轴
     const padT = 10;
@@ -80,7 +81,7 @@ export default function KlineChart({ data, maxBars = 120 }: Props) {
       ma5Path: maPath(ma5), ma20Path: maPath(ma20), ma60Path: maPath(ma60),
       lastClose: closes[closes.length - 1],
     };
-  }, [bars]);
+  }, [bars, height]);
 
   if (!geom || bars.length === 0) {
     return <div className="py-6 text-center text-2xs text-ink-3">暂无 K 线数据</div>;
@@ -112,7 +113,12 @@ export default function KlineChart({ data, maxBars = 120 }: Props) {
         onMouseMove={onMove}
         onMouseLeave={() => setHover(null)}
       >
-        <svg viewBox={`0 0 ${geom.W} ${geom.H}`} className="w-full" style={{ display: "block" }}>
+        <svg
+          viewBox={`0 0 ${geom.W} ${geom.H}`}
+          preserveAspectRatio="none"
+          className="w-full"
+          style={{ display: "block", height }}
+        >
           {/* 价格网格 */}
           {[0, 0.25, 0.5, 0.75, 1].map((r) => {
             const y = geom.padT + r * geom.priceH;

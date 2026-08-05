@@ -1,5 +1,5 @@
 // 策略库全局状态 —— 抽屉开关 + 策略列表缓存 + CRUD/激活动作。
-// ResearchCard 读取「当前激活策略名」，TopBar 菜单与研究卡都能打开抽屉。
+// ResearchCard 读取「当前激活策略名」，顶栏策略中心与研究卡都能打开抽屉。
 
 import { create } from "zustand";
 import {
