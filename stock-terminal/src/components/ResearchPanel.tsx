@@ -87,7 +87,7 @@ export default function ResearchPanel() {
     <Drawer
       open={open}
       onClose={closeResearch}
-      width={560}
+      size="min(560px, 100vw)"
       styles={{ body: { padding: 0, display: "flex", flexDirection: "column" } }}
       title={
         <div className="flex items-center gap-2">
@@ -114,7 +114,7 @@ export default function ResearchPanel() {
                 </span>
               )}
               {source === "missing" && (
-                <span className="inline-flex items-center gap-1 rounded-sm px-1 py-0.5 font-mono text-2xs font-normal" style={{ color: "var(--amber)", background: "rgba(217,119,6,0.12)" }}>
+                <span className="inline-flex items-center gap-1 rounded-sm px-1 py-0.5 font-mono text-2xs font-normal" style={{ color: "var(--amber)", background: "var(--amber-dim)" }}>
                   <WifiOff size={9} />
                   无记录
                 </span>

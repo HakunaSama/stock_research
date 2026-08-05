@@ -154,7 +154,7 @@ export default function Login() {
   );
 
   return (
-    <div className="relative z-10 flex h-screen items-center justify-center p-4">
+    <div className="relative z-10 flex min-h-dvh items-center justify-center p-4">
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
@@ -230,12 +230,12 @@ export default function Login() {
                   label={<span className="text-2xs text-ink-3">设置密码</span>}
                   rules={[
                     { required: true, message: "请设置密码" },
-                    { min: 6, message: "至少 6 位" },
+                    { min: 8, message: "至少 8 位" },
                   ]}
                 >
                   <Input.Password
                     prefix={<LockOutlined style={{ color: "var(--text-muted)" }} />}
-                    placeholder="至少 6 位"
+                    placeholder="至少 8 位"
                     autoComplete="new-password"
                   />
                 </Form.Item>
@@ -251,12 +251,12 @@ export default function Login() {
                   label={<span className="text-2xs text-ink-3">新密码</span>}
                   rules={[
                     { required: true, message: "请设置新密码" },
-                    { min: 6, message: "至少 6 位" },
+                    { min: 8, message: "至少 8 位" },
                   ]}
                 >
                   <Input.Password
                     prefix={<LockOutlined style={{ color: "var(--text-muted)" }} />}
-                    placeholder="至少 6 位"
+                    placeholder="至少 8 位"
                     autoComplete="new-password"
                   />
                 </Form.Item>

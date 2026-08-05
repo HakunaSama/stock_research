@@ -82,7 +82,7 @@ def _cache_put(key: Tuple[str, ...], value: Any) -> None:
 # 主要指数（腾讯源代码规范）：上证指数 / 深证成指 / 创业板指 / 沪深300
 INDEX_SYMBOLS = ["sh000001", "sz399001", "sz399006", "sh000300"]
 
-_QUOTE_TTL = 3.0  # seconds — realtime enough for a terminal, gentle on upstream
+_QUOTE_TTL = 2.0  # seconds — supports a 3s index ticker without serving stale snapshots
 
 
 def _quote_to_dict(q: Any) -> Dict[str, Any]:

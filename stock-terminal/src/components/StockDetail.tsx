@@ -78,7 +78,7 @@ function QuoteHeader({ quote }: { quote: StockQuote }) {
           </div>
         </div>
 
-        <div className="grid flex-1 basis-[420px] grid-cols-4 gap-1.5 sm:grid-cols-5">
+        <div className="grid flex-1 basis-[420px] grid-cols-2 gap-1.5 min-[480px]:grid-cols-3 sm:grid-cols-5">
           <Stat label="今开" value={quote.open.toFixed(2)} tone={dirColor(quote.open - quote.prev_close)} />
           <Stat label="最高" value={quote.high.toFixed(2)} tone={dirColor(quote.high - quote.prev_close)} />
           <Stat label="最低" value={quote.low.toFixed(2)} tone={dirColor(quote.low - quote.prev_close)} />

@@ -13,15 +13,15 @@ export default function Discipline() {
           执行纪律
         </span>
       }
-      style={{ borderColor: "rgba(217,119,6,0.3)" }}
-      styles={{ body: { padding: "8px 12px" } }}
+      style={{ borderColor: "var(--amber)", height: "100%" }}
+      styles={{ body: { padding: "8px 12px", overflowY: "auto" } }}
     >
       <ol className="m-0 flex list-none flex-col gap-1.5 p-0">
         {discipline.map((d) => (
           <li key={d.order} className="flex items-start gap-2">
             <span
               className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm font-mono text-2xs font-bold"
-              style={{ background: "rgba(217,119,6,0.12)", color: "var(--amber)" }}
+              style={{ background: "var(--amber-dim)", color: "var(--amber)" }}
             >
               {d.order}
             </span>

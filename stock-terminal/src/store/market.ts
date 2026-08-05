@@ -35,6 +35,7 @@ interface MarketState {
   indices: StockQuote[];
   lastUpdated: number | null; // 最近一次行情成功刷新的时间戳(ms)
   refreshMarket: () => Promise<void>;
+  refreshIndices: () => Promise<void>;
 
   // ----- AI 研究产物 -----
   runs: Record<string, RunSummary>; // key: target code
@@ -81,19 +82,20 @@ export const useMarket = create<MarketState>()(
         const { watchlist, selectedCode } = get();
         const codes = watchlist.map((w) => w.code);
         if (selectedCode && !codes.includes(selectedCode)) codes.push(selectedCode);
-        const [quotes, indices] = await Promise.all([
-          fetchQuotes(codes),
-          fetchIndices(),
-        ]);
-        if (quotes.length === 0 && indices.length === 0) return; // 失败保留旧快照
+        const quotes = await fetchQuotes(codes);
+        if (quotes.length === 0) return; // 失败保留旧快照
         set((s) => ({
           quotes: {
             ...s.quotes,
             ...Object.fromEntries(quotes.map((q) => [q.code, q])),
           },
-          indices: indices.length > 0 ? indices : s.indices,
           lastUpdated: Date.now(),
         }));
+      },
+      refreshIndices: async () => {
+        const indices = await fetchIndices();
+        if (indices.length === 0) return;
+        set({ indices, lastUpdated: Date.now() });
       },
 
       runs: {},
@@ -127,24 +129,59 @@ export const useMarket = create<MarketState>()(
   ),
 );
 
-// ----- 行情轮询：单例 interval，页面隐藏时暂停 -----
-const POLL_MS = 5000;
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+// ----- 行情轮询：指数高频、个股常规频率；页面隐藏时暂停 -----
+const QUOTE_POLL_MS = 5000;
+const INDEX_POLL_MS = 3000;
+let quotePollTimer: ReturnType<typeof setInterval> | null = null;
+let indexPollTimer: ReturnType<typeof setInterval> | null = null;
+let quotesRefreshing = false;
+let indicesRefreshing = false;
 
 export function startMarketPolling(): () => void {
-  const tick = () => {
-    if (document.hidden) return;
-    void useMarket.getState().refreshMarket();
+  const refreshQuotes = async () => {
+    if (document.hidden || quotesRefreshing) return;
+    quotesRefreshing = true;
+    try {
+      await useMarket.getState().refreshMarket();
+    } finally {
+      quotesRefreshing = false;
+    }
   };
-  void useMarket.getState().refreshMarket();
+  const refreshIndices = async () => {
+    if (document.hidden || indicesRefreshing) return;
+    indicesRefreshing = true;
+    try {
+      await useMarket.getState().refreshIndices();
+    } finally {
+      indicesRefreshing = false;
+    }
+  };
+  const onVisibilityChange = () => {
+    if (document.hidden) return;
+    void refreshQuotes();
+    void refreshIndices();
+  };
+
+  void refreshQuotes();
+  void refreshIndices();
   void useMarket.getState().refreshRuns();
-  if (pollTimer == null) {
-    pollTimer = setInterval(tick, POLL_MS);
+  if (quotePollTimer == null) {
+    quotePollTimer = setInterval(() => void refreshQuotes(), QUOTE_POLL_MS);
   }
+  if (indexPollTimer == null) {
+    indexPollTimer = setInterval(() => void refreshIndices(), INDEX_POLL_MS);
+  }
+  document.addEventListener("visibilitychange", onVisibilityChange);
+
   return () => {
-    if (pollTimer != null) {
-      clearInterval(pollTimer);
-      pollTimer = null;
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    if (quotePollTimer != null) {
+      clearInterval(quotePollTimer);
+      quotePollTimer = null;
+    }
+    if (indexPollTimer != null) {
+      clearInterval(indexPollTimer);
+      indexPollTimer = null;
     }
   };
 }

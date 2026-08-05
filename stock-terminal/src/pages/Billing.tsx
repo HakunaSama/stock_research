@@ -91,7 +91,7 @@ export default function Billing() {
   }
 
   return (
-    <div className="relative z-10 mx-auto h-screen max-w-5xl overflow-y-auto p-5">
+    <div className="responsive-page relative z-10 mx-auto h-dvh max-w-5xl overflow-y-auto p-3 sm:p-5">
       <div className="mb-5 flex items-center justify-between">
         <Link to="/" className="flex items-center gap-1.5 text-xs text-ink-3 hover:text-ink">
           <ArrowLeft size={14} /> 返回终端
@@ -200,7 +200,7 @@ export default function Billing() {
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <section>
           <h2 className="mb-2 text-xs font-600 text-ink-2">最近订单</h2>
-          <div className="overflow-hidden rounded-lg border border-subtle bg-panel">
+          <div className="overflow-x-auto rounded-lg border border-subtle bg-panel">
             {orders.length === 0 ? (
               <div className="px-3 py-6 text-center text-2xs text-ink-3">暂无订单</div>
             ) : (
@@ -240,7 +240,7 @@ export default function Billing() {
 
         <section>
           <h2 className="mb-2 text-xs font-600 text-ink-2">点数流水</h2>
-          <div className="overflow-hidden rounded-lg border border-subtle bg-panel">
+          <div className="overflow-x-auto rounded-lg border border-subtle bg-panel">
             {ledger.length === 0 ? (
               <div className="px-3 py-6 text-center text-2xs text-ink-3">暂无流水</div>
             ) : (

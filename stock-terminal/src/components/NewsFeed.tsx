@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Card, Empty, List, Skeleton, Typography } from "antd";
+import { Card, Empty, Skeleton, Typography } from "antd";
 import { ReadOutlined } from "@ant-design/icons";
 import { fetchNews } from "@/lib/market";
 import type { NewsArticle } from "@/types/market";
@@ -39,11 +39,9 @@ export default function NewsFeed({ code }: { code: string }) {
           description={<span className="text-2xs text-ink-3">暂无相关资讯</span>}
         />
       ) : (
-        <List
-          size="small"
-          dataSource={items}
-          renderItem={(n) => (
-            <List.Item style={{ padding: "8px 0" }}>
+        <ul className="m-0 list-none divide-y divide-subtle p-0">
+          {items.map((n) => (
+            <li key={`${n.date}-${n.url}-${n.title}`} className="flex py-2">
               <div className="min-w-0 flex-1">
                 <Typography.Link
                   href={n.url || undefined}
@@ -58,9 +56,9 @@ export default function NewsFeed({ code }: { code: string }) {
                   {n.source && <span>{n.source}</span>}
                 </div>
               </div>
-            </List.Item>
-          )}
-        />
+            </li>
+          ))}
+        </ul>
       )}
     </Card>
   );

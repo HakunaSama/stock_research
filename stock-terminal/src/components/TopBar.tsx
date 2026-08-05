@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Avatar, Button, Dropdown, Tag, Tooltip } from "antd";
 import {
+  BgColorsOutlined,
+  CheckOutlined,
   CrownOutlined,
   LogoutOutlined,
   SafetyOutlined,
@@ -13,6 +15,7 @@ import { dirColor, signPct } from "@/lib/utils";
 import { useAuth } from "@/store/auth";
 import { useMarket } from "@/store/market";
 import { activeStrategyName, useStrategies } from "@/store/strategy";
+import { useSkin } from "@/theme/SkinContext";
 import AccountModal from "./AccountModal";
 import BrandMark from "./BrandMark";
 import SearchBox from "./SearchBox";
@@ -28,6 +31,7 @@ export default function TopBar() {
   const strategyName = useStrategies(activeStrategyName);
   const navigate = useNavigate();
   const [accountOpen, setAccountOpen] = useState(false);
+  const { skinId, setSkin, skins } = useSkin();
 
   useEffect(() => {
     ensureStrategiesLoaded();
@@ -37,7 +41,7 @@ export default function TopBar() {
     {
       key: "account",
       icon: <SafetyOutlined />,
-      label: "账号与安全",
+      label: "个人中心",
       onClick: () => setAccountOpen(true),
     },
     {
@@ -64,22 +68,29 @@ export default function TopBar() {
     },
   ];
 
+  const skinMenuItems = skins.map((skin) => ({
+    key: skin.id,
+    icon: skin.id === skinId ? <CheckOutlined /> : <span className="inline-block w-3" />,
+    label: skin.label,
+    onClick: () => setSkin(skin.id),
+  }));
+
   return (
-    <header className="relative z-30 flex items-center justify-between gap-4 border-b border-subtle bg-panel/85 px-4 py-2 backdrop-blur-md">
+    <header className="app-topbar">
       {/* 品牌 */}
-      <Link to="/" className="flex shrink-0 items-center no-underline">
+      <Link to="/" className="topbar-brand flex shrink-0 items-center no-underline">
         <BrandMark size="sm" />
       </Link>
 
       {/* 实时指数条 */}
-      <div className="flex min-w-0 flex-1 items-center gap-5 overflow-hidden pl-2">
+      <div className="topbar-ticker flex min-w-0 items-center gap-5 overflow-hidden pl-2">
         {indices.slice(0, 4).map((ix) => (
-          <div key={ix.symbol} className="flex shrink-0 items-baseline gap-1.5">
-            <span className="text-2xs text-ink-3">{ix.name}</span>
-            <span className="font-mono text-[13px] font-semibold" style={{ color: dirColor(ix.change_pct) }}>
+          <div key={ix.symbol} className="topbar-index-item flex shrink-0 items-baseline gap-1.5">
+            <span className="topbar-index-name text-2xs text-ink-3">{ix.name}</span>
+            <span className="topbar-index-price font-mono text-[13px] font-semibold" style={{ color: dirColor(ix.change_pct) }}>
               {ix.price.toFixed(2)}
             </span>
-            <span className="font-mono text-2xs font-medium" style={{ color: dirColor(ix.change_pct) }}>
+            <span className="topbar-index-change font-mono text-2xs font-medium" style={{ color: dirColor(ix.change_pct) }}>
               {signPct(ix.change_pct)}
             </span>
           </div>
@@ -91,7 +102,7 @@ export default function TopBar() {
           </div>
         )}
         {lastUpdated != null && (
-          <span className="flex shrink-0 items-center gap-1.5 font-mono text-2xs text-ink-3">
+          <span data-testid="market-last-updated" className="topbar-index-time flex shrink-0 items-center gap-1.5 font-mono text-2xs text-ink-3">
             <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full" style={{ background: "var(--down)" }} />
             {new Date(lastUpdated).toLocaleTimeString("zh-CN", { hour12: false })}
           </span>
@@ -101,7 +112,7 @@ export default function TopBar() {
       {/* 策略中心：从账户菜单提升为独立、持续可见的一级入口 */}
       <nav
         aria-label="策略中心"
-        className="flex shrink-0 items-center rounded-md border border-subtle bg-panel-2 p-0.5 shadow-sm"
+        className="topbar-strategy flex shrink-0 items-center rounded-md border border-subtle bg-panel-2 p-0.5 shadow-sm"
       >
         <Link
           to="/hall"
@@ -124,8 +135,16 @@ export default function TopBar() {
       </nav>
 
       {/* 搜索 + 账户 */}
-      <div className="flex shrink-0 items-center gap-3">
+      <div className="topbar-actions flex shrink-0 items-center gap-3">
         <SearchBox />
+
+        <Dropdown menu={{ items: skinMenuItems }} placement="bottomRight" trigger={["click"]}>
+          <Tooltip title="切换界面皮肤">
+            <Button aria-label="切换界面皮肤" icon={<BgColorsOutlined />}>
+              <span className="topbar-skin-label">皮肤</span>
+            </Button>
+          </Tooltip>
+        </Dropdown>
 
         {user && (
           <>
@@ -133,8 +152,8 @@ export default function TopBar() {
               <Link to="/billing">
                 <Button size="middle">
                   <WalletOutlined style={{ color: "var(--accent)" }} />
-                  <span className="font-mono font-semibold">{wallet?.balance ?? 0}</span>
-                  <span className="text-2xs text-ink-3">点</span>
+                  <span className="topbar-wallet-meta font-mono font-semibold">{wallet?.balance ?? 0}</span>
+                  <span className="topbar-wallet-meta text-2xs text-ink-3">点</span>
                   {wallet && wallet.free_left > 0 && (
                     <Tag color="purple" style={{ marginInlineEnd: 0, fontSize: 10, lineHeight: "16px" }}>
                       免费 {wallet.free_left}
@@ -151,8 +170,13 @@ export default function TopBar() {
 
             <Dropdown menu={{ items: menuItems }} placement="bottomRight" trigger={["click"]}>
               <button className="flex items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:bg-elevated">
-                <Avatar size={26} icon={<UserOutlined />} style={{ background: "var(--accent-dim)", color: "var(--accent)" }} />
-                <span className="text-xs text-ink-2">{user.username}</span>
+                <Avatar
+                  size={26}
+                  src={user.avatar_url || undefined}
+                  icon={!user.avatar_url ? <UserOutlined /> : undefined}
+                  style={{ background: "var(--accent-dim)", color: "var(--accent)" }}
+                />
+                <span className="topbar-user-name text-xs text-ink-2">{user.display_name || user.username}</span>
                 {user.is_admin && (
                   <Tag color="purple" style={{ marginInlineEnd: 0, fontSize: 10, lineHeight: "16px" }}>
                     管理员

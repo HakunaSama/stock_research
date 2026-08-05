@@ -168,7 +168,7 @@ export default function Hall() {
   }
 
   return (
-    <div className="relative z-10 mx-auto h-screen max-w-5xl overflow-y-auto p-5">
+    <div className="responsive-page relative z-10 mx-auto h-dvh max-w-5xl overflow-y-auto p-3 sm:p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Link to="/" className="flex items-center gap-1 text-xs text-ink-3 hover:text-ink">
@@ -309,7 +309,7 @@ export default function Hall() {
                 </button>
                 <button
                   className="inline-flex items-center gap-1 border-0 bg-transparent p-0"
-                  style={{ color: s.favorited ? "#d4a017" : undefined, cursor: "pointer" }}
+                  style={{ color: s.favorited ? "var(--favorite)" : undefined, cursor: "pointer" }}
                   onClick={() => void onFavorite(s)}
                 >
                   {s.favorited ? <StarFilled /> : <StarOutlined />} {s.favorite_count}
@@ -325,7 +325,7 @@ export default function Hall() {
 
       <Drawer
         title={detail?.name || "策略详情"}
-        width={560}
+        size="min(560px, 100vw)"
         open={!!detail}
         onClose={() => setDetail(null)}
       >

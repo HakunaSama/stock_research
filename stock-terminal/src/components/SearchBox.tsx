@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AutoComplete, Input } from "antd";
+import type { InputRef } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { searchStocks } from "@/lib/market";
 import { useMarket } from "@/store/market";
@@ -14,7 +15,7 @@ export default function SearchBox() {
   const [kw, setKw] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [busy, setBusy] = useState(false);
-  const inputRef = useRef<any>(null);
+  const inputRef = useRef<InputRef>(null);
 
   useEffect(() => {
     const q = kw.trim();
@@ -64,6 +65,7 @@ export default function SearchBox() {
 
   return (
     <AutoComplete
+      className="topbar-search"
       value={kw}
       options={options}
       onChange={setKw}
@@ -74,7 +76,6 @@ export default function SearchBox() {
         setHits([]);
         inputRef.current?.blur();
       }}
-      style={{ width: 260 }}
       popupMatchSelectWidth={300}
       notFoundContent={
         kw.trim() ? (

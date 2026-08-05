@@ -12,7 +12,7 @@ import { useMarket, type WatchSort } from "@/store/market";
 import type { RankItem, RankKind } from "@/types/market";
 
 // 侧栏股票池 —— 自选(用户管理,本地持久化) + 全市场实时榜单(涨幅/跌幅/成交额)。
-// 榜单来自东财全市场列表,每 10s 刷新;任意榜单股点击即看,悬停 + 一键加自选。
+// 榜单来自东财全市场列表,每 10s 刷新;内容区独立滚动,任意榜单股点击即看。
 
 const RANK_TABS: { key: RankKind; label: string }[] = [
   { key: "pct_desc", label: "涨幅榜" },
@@ -215,7 +215,6 @@ function RankTab({ kind }: { kind: RankKind }) {
       alive = false;
       clearTimeout(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind]);
 
   if (rows == null) {
@@ -237,7 +236,7 @@ function RankTab({ kind }: { kind: RankKind }) {
     );
   }
   return (
-    <div className="h-full overflow-y-auto">
+    <div data-testid={`rank-scroll-${kind}`} className="h-full min-h-0 overflow-y-auto overscroll-contain">
       {rows.map((r, i) => (
         <Row
           key={r.code}

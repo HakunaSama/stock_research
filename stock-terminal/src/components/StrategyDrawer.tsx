@@ -108,7 +108,7 @@ export default function StrategyDrawer() {
     return (
       <div
         className="card mb-2.5 px-3.5 py-3"
-        style={isActive ? { borderColor: "rgba(130,71,255,0.45)" } : undefined}
+        style={isActive ? { borderColor: "color-mix(in srgb, var(--accent) 45%, transparent)" } : undefined}
       >
         <div className="flex items-center gap-2">
           <span className="font-display text-[13px] font-semibold text-ink">{s.name}</span>
@@ -197,7 +197,7 @@ export default function StrategyDrawer() {
   return (
     <Drawer
       title={<span className="font-display text-sm font-semibold">策略库 · 热插拔</span>}
-      width={520}
+      size="min(520px, 100vw)"
       open={drawerOpen}
       onClose={() => {
         setForm(null);
@@ -215,7 +215,7 @@ export default function StrategyDrawer() {
       </p>
 
       {form ? (
-        <div className="card mb-3 px-3.5 py-3" style={{ borderColor: "rgba(130,71,255,0.35)" }}>
+        <div className="card mb-3 px-3.5 py-3" style={{ borderColor: "color-mix(in srgb, var(--accent) 35%, transparent)" }}>
           <div className="mb-2 font-display text-xs font-semibold text-ink">
             {form.id == null ? "新建策略" : "编辑策略"}
           </div>
@@ -287,7 +287,7 @@ export default function StrategyDrawer() {
       {builtin && (
         <div
           className="mb-2.5 rounded-lg border border-dashed px-3.5 py-3"
-          style={{ borderColor: activeId === 0 ? "rgba(130,71,255,0.45)" : "var(--border-strong)" }}
+          style={{ borderColor: activeId === 0 ? "color-mix(in srgb, var(--accent) 45%, transparent)" : "var(--border-strong)" }}
         >
           <div className="flex items-center gap-2">
             <span className="font-display text-[13px] font-semibold text-ink">{builtin.name}</span>

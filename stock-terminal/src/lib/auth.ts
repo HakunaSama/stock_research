@@ -10,6 +10,21 @@ export interface PublicUser {
   email: string;
   email_verified: boolean;
   is_admin: boolean;
+  display_name: string;
+  bio: string;
+  avatar_url: string;
+  created_at: number;
+  last_login_at: number | null;
+}
+
+export interface ActiveSession {
+  id: string;
+  current: boolean;
+  created_at: number;
+  expires_at: number;
+  last_seen_at: number;
+  user_agent: string;
+  ip_address: string;
 }
 
 export interface AppConfig {
@@ -182,6 +197,44 @@ export function bindEmail(email: string, code: string): Promise<PublicUser> {
     method: "POST",
     body: JSON.stringify({ email, code }),
   });
+}
+
+export function updateProfile(input: {
+  username: string;
+  display_name: string;
+  bio: string;
+  current_password?: string;
+}): Promise<PublicUser> {
+  return req<PublicUser>("/api/auth/profile", {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export function uploadAvatar(file: File): Promise<PublicUser> {
+  return req<PublicUser>("/api/auth/avatar", {
+    method: "PUT",
+    headers: { "Content-Type": file.type },
+    body: file,
+  });
+}
+
+export function deleteAvatar(): Promise<PublicUser> {
+  return req<PublicUser>("/api/auth/avatar", { method: "DELETE" });
+}
+
+export function fetchSessions(): Promise<ActiveSession[]> {
+  return req<ActiveSession[]>("/api/auth/sessions");
+}
+
+export function revokeSession(sessionId: string): Promise<{ ok: boolean }> {
+  return req<{ ok: boolean }>(`/api/auth/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+  });
+}
+
+export function revokeOtherSessions(): Promise<{ ok: boolean }> {
+  return req<{ ok: boolean }>("/api/auth/sessions/revoke-others", { method: "POST" });
 }
 
 export function logout(): Promise<{ ok: boolean }> {

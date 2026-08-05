@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowLeft,
@@ -52,7 +52,7 @@ export default function Admin() {
   const [err, setErr] = useState("");
   const [query, setQuery] = useState(""); // 用户名/邮箱模糊搜索
 
-  async function reload(q = query) {
+  const reload = useCallback(async (q: string) => {
     setLoading(true);
     setErr("");
     try {
@@ -71,11 +71,11 @@ export default function Admin() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    void reload();
-  }, []);
+    void reload("");
+  }, [reload]);
 
   // 手动充值/扣减:弹窗输入 delta。
   async function onAdjust(u: AdminUser) {
@@ -92,7 +92,7 @@ export default function Admin() {
     const memo = window.prompt("备注(可选):", "") ?? "";
     try {
       await adminAdjustCredits(u.id, delta, memo);
-      await reload();
+      await reload(query);
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "调整失败");
     }
@@ -109,7 +109,7 @@ export default function Admin() {
     }
     try {
       await adminGrantMembership(u.id, days);
-      await reload();
+      await reload(query);
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "操作失败");
     }
@@ -121,7 +121,7 @@ export default function Admin() {
     if (!window.confirm(`确认${verb}用户「${u.username}」?${u.disabled ? "" : "禁用后将立即踢下线。"}`)) return;
     try {
       await adminSetDisabled(u.id, !u.disabled);
-      await reload();
+      await reload(query);
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "操作失败");
     }
@@ -135,7 +135,7 @@ export default function Admin() {
   ];
 
   return (
-    <div className="relative z-10 mx-auto h-screen max-w-6xl overflow-y-auto p-5">
+    <div className="responsive-page relative z-10 mx-auto h-dvh max-w-6xl overflow-y-auto p-3 sm:p-5">
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <ShieldCheck size={18} style={{ color: "var(--accent)" }} />
@@ -203,7 +203,7 @@ export default function Admin() {
                 className="mb-3 flex gap-2"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  void reload();
+                  void reload(query);
                 }}
               >
                 <input
@@ -245,7 +245,7 @@ export default function Admin() {
                               <span>
                                 {u.email}
                                 {u.email_verified && (
-                                  <span className="ml-1" style={{ color: "#00a05a" }}>✓</span>
+                                  <span className="ml-1" style={{ color: "var(--down)" }}>✓</span>
                                 )}
                               </span>
                             ) : (
@@ -272,9 +272,9 @@ export default function Admin() {
                           {/* 状态用语义色(绿=正常/红=禁用),别用行情涨跌色(A股红涨绿跌) */}
                           <td className="px-3 py-2 text-center font-sans">
                             {u.disabled ? (
-                              <span style={{ color: "#e5484d" }}>已禁用</span>
+                              <span style={{ color: "var(--up)" }}>已禁用</span>
                             ) : (
-                              <span style={{ color: "#00a05a" }}>正常</span>
+                              <span style={{ color: "var(--down)" }}>正常</span>
                             )}
                           </td>
                           <td className="px-3 py-2 text-right">
@@ -295,8 +295,8 @@ export default function Admin() {
                                 onClick={() => void onToggleDisabled(u)}
                                 className="rounded-sm border px-2 py-0.5 font-sans text-2xs transition-colors"
                                 style={{
-                                  borderColor: u.disabled ? "var(--border-subtle)" : "#e5484d",
-                                  color: u.disabled ? "var(--text-secondary)" : "#e5484d",
+                                  borderColor: u.disabled ? "var(--border-subtle)" : "var(--up)",
+                                  color: u.disabled ? "var(--text-secondary)" : "var(--up)",
                                 }}
                               >
                                 {u.disabled ? "解禁" : "禁用"}
@@ -314,7 +314,7 @@ export default function Admin() {
 
           {/* 订单 */}
           {tab === "orders" && (
-            <div className="overflow-hidden rounded-lg border border-subtle bg-panel">
+            <div className="overflow-x-auto rounded-lg border border-subtle bg-panel">
               {orders.length === 0 ? (
                 <div className="px-3 py-8 text-center text-2xs text-ink-3">暂无订单</div>
               ) : (
@@ -356,7 +356,7 @@ export default function Admin() {
 
           {/* 流水 */}
           {tab === "ledger" && (
-            <div className="overflow-hidden rounded-lg border border-subtle bg-panel">
+            <div className="overflow-x-auto rounded-lg border border-subtle bg-panel">
               {ledger.length === 0 ? (
                 <div className="px-3 py-8 text-center text-2xs text-ink-3">暂无流水</div>
               ) : (

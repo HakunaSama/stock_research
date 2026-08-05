@@ -1,29 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useSkin } from "@/theme/SkinContext";
 
-type Theme = 'light' | 'dark';
-
+// 兼容旧调用方；主题状态的唯一数据源已经收敛到 ThemeProvider。
 export function useTheme() {
-  const [theme, setTheme] = useState<Theme>(() => {
-    const savedTheme = localStorage.getItem('theme') as Theme;
-    if (savedTheme) {
-      return savedTheme;
-    }
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  });
-
-  useEffect(() => {
-    document.documentElement.classList.remove('light', 'dark');
-    document.documentElement.classList.add(theme);
-    localStorage.setItem('theme', theme);
-  }, [theme]);
-
-  const toggleTheme = () => {
-    setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
-  };
+  const { skinId, setSkin } = useSkin();
+  const isDark = skinId === "midnight";
 
   return {
-    theme,
-    toggleTheme,
-    isDark: theme === 'dark'
+    theme: isDark ? "dark" as const : "light" as const,
+    toggleTheme: () => setSkin(isDark ? "flow" : "midnight"),
+    isDark,
   };
-} 
+}

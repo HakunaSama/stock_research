@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -102,7 +103,12 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             is_admin       INTEGER NOT NULL DEFAULT 0,
             email          TEXT NOT NULL DEFAULT '',
             email_verified INTEGER NOT NULL DEFAULT 0,
-            disabled       INTEGER NOT NULL DEFAULT 0
+            disabled       INTEGER NOT NULL DEFAULT 0,
+            display_name   TEXT NOT NULL DEFAULT '',
+            bio            TEXT NOT NULL DEFAULT '',
+            avatar_key     TEXT NOT NULL DEFAULT '',
+            updated_at     REAL NOT NULL DEFAULT 0,
+            last_login_at  REAL
         );
 
         -- Email verification codes (register / reset password / bind email).
@@ -133,9 +139,26 @@ def _init_schema(conn: sqlite3.Connection) -> None:
 
         CREATE TABLE IF NOT EXISTS sessions (
             token      TEXT PRIMARY KEY,
+            session_id TEXT UNIQUE NOT NULL,
             user_id    INTEGER NOT NULL,
             created_at REAL NOT NULL,
             expires_at REAL NOT NULL,
+            last_seen_at REAL NOT NULL,
+            user_agent TEXT NOT NULL DEFAULT '',
+            ip_address TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        -- Security-relevant account operations. Details intentionally contain
+        -- metadata only (never passwords, verification codes, or session tokens).
+        CREATE TABLE IF NOT EXISTS account_audit_logs (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER NOT NULL,
+            action     TEXT NOT NULL,
+            details    TEXT NOT NULL DEFAULT '{}',
+            ip_address TEXT NOT NULL DEFAULT '',
+            user_agent TEXT NOT NULL DEFAULT '',
+            created_at REAL NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
 
@@ -255,6 +278,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         );
 
         CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_audit_user ON account_audit_logs(user_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_email_codes ON email_codes(email, purpose, created_at);
         CREATE INDEX IF NOT EXISTS idx_jobs_user ON research_jobs(user_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_ledger_user ON credit_ledger(user_id, created_at);
@@ -296,10 +320,51 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
     if "disabled" not in ucols:
         conn.execute("ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0")
+    if "display_name" not in ucols:
+        conn.execute("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''")
+    if "bio" not in ucols:
+        conn.execute("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''")
+    if "avatar_key" not in ucols:
+        conn.execute("ALTER TABLE users ADD COLUMN avatar_key TEXT NOT NULL DEFAULT ''")
+    if "updated_at" not in ucols:
+        conn.execute("ALTER TABLE users ADD COLUMN updated_at REAL NOT NULL DEFAULT 0")
+    if "last_login_at" not in ucols:
+        conn.execute("ALTER TABLE users ADD COLUMN last_login_at REAL")
     # Unique on non-empty emails only, so legacy username-only accounts (email
     # = '') can coexist until they bind one.
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email != ''"
+    )
+
+    session_cols = {r["name"] for r in conn.execute("PRAGMA table_info(sessions)")}
+    if "session_id" not in session_cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN session_id TEXT NOT NULL DEFAULT ''")
+    if "last_seen_at" not in session_cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN last_seen_at REAL NOT NULL DEFAULT 0")
+    if "user_agent" not in session_cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN user_agent TEXT NOT NULL DEFAULT ''")
+    if "ip_address" not in session_cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN ip_address TEXT NOT NULL DEFAULT ''")
+    for row in conn.execute("SELECT token FROM sessions WHERE session_id = ''").fetchall():
+        conn.execute(
+            "UPDATE sessions SET session_id = ?, last_seen_at = created_at WHERE token = ?",
+            (secrets.token_urlsafe(12), row["token"]),
+        )
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_id ON sessions(session_id)")
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS account_audit_logs (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER NOT NULL,
+            action     TEXT NOT NULL,
+            details    TEXT NOT NULL DEFAULT '{}',
+            ip_address TEXT NOT NULL DEFAULT '',
+            user_agent TEXT NOT NULL DEFAULT '',
+            created_at REAL NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_user ON account_audit_logs(user_id, created_at);
+        """
     )
 
     # Strategy hall: publish flag, summary, engagement counters + social tables.
@@ -409,6 +474,48 @@ def set_user_email(user_id: int, email: str, verified: bool = True) -> None:
         conn.commit()
 
 
+def update_user_profile(
+    user_id: int, username: str, display_name: str, bio: str,
+) -> Optional[sqlite3.Row]:
+    """Update public profile fields atomically with case-insensitive username
+    uniqueness. The module lock makes the check-and-update race-free on SQLite."""
+    conn = get_conn()
+    with _lock:
+        conflict = conn.execute(
+            "SELECT id FROM users WHERE lower(username) = lower(?) AND id != ?",
+            (username, user_id),
+        ).fetchone()
+        if conflict is not None:
+            return None
+        conn.execute(
+            "UPDATE users SET username = ?, display_name = ?, bio = ?, updated_at = ? WHERE id = ?",
+            (username, display_name, bio, time.time(), user_id),
+        )
+        conn.commit()
+    return get_user_by_id(user_id)
+
+
+def set_user_avatar(user_id: int, avatar_key: str) -> Optional[sqlite3.Row]:
+    conn = get_conn()
+    with _lock:
+        conn.execute(
+            "UPDATE users SET avatar_key = ?, updated_at = ? WHERE id = ?",
+            (avatar_key, time.time(), user_id),
+        )
+        conn.commit()
+    return get_user_by_id(user_id)
+
+
+def mark_user_login(user_id: int) -> None:
+    conn = get_conn()
+    with _lock:
+        conn.execute(
+            "UPDATE users SET last_login_at = ?, updated_at = CASE WHEN updated_at = 0 THEN ? ELSE updated_at END WHERE id = ?",
+            (time.time(), time.time(), user_id),
+        )
+        conn.commit()
+
+
 def set_user_disabled(user_id: int, disabled: bool) -> None:
     conn = get_conn()
     with _lock:
@@ -461,14 +568,20 @@ def set_user_admin(user_id: int, is_admin: bool) -> None:
 # --- sessions ---------------------------------------------------------------
 
 
-def create_session(user_id: int, ttl_seconds: int) -> str:
+def create_session(
+    user_id: int, ttl_seconds: int, user_agent: str = "", ip_address: str = "",
+) -> str:
     token = secrets.token_urlsafe(32)
+    session_id = secrets.token_urlsafe(12)
     now = time.time()
     conn = get_conn()
     with _lock:
         conn.execute(
-            "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-            (token, user_id, now, now + ttl_seconds),
+            "INSERT INTO sessions "
+            "(token, session_id, user_id, created_at, expires_at, last_seen_at, user_agent, ip_address) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (token, session_id, user_id, now, now + ttl_seconds, now,
+             user_agent[:300], ip_address[:64]),
         )
         conn.commit()
     return token
@@ -490,7 +603,57 @@ def get_session_user(token: str) -> Optional[sqlite3.Row]:
     user = get_user_by_id(row["user_id"])
     if user is not None and user["disabled"]:
         return None  # banned accounts hold no live sessions
+    now = time.time()
+    if now - (row["last_seen_at"] or 0) >= 300:
+        with _lock:
+            conn.execute("UPDATE sessions SET last_seen_at = ? WHERE token = ?", (now, token))
+            conn.commit()
     return user
+
+
+def list_user_sessions(user_id: int) -> List[sqlite3.Row]:
+    now = time.time()
+    conn = get_conn()
+    return conn.execute(
+        "SELECT session_id, created_at, expires_at, last_seen_at, user_agent, ip_address "
+        "FROM sessions WHERE user_id = ? AND expires_at >= ? ORDER BY last_seen_at DESC",
+        (user_id, now),
+    ).fetchall()
+
+
+def delete_user_session(user_id: int, session_id: str) -> bool:
+    conn = get_conn()
+    with _lock:
+        cur = conn.execute(
+            "DELETE FROM sessions WHERE user_id = ? AND session_id = ?",
+            (user_id, session_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def session_id_for_token(token: str) -> str:
+    if not token:
+        return ""
+    row = get_conn().execute(
+        "SELECT session_id FROM sessions WHERE token = ?", (token,)
+    ).fetchone()
+    return row["session_id"] if row else ""
+
+
+def add_account_audit(
+    user_id: int, action: str, details: Optional[Dict[str, Any]] = None,
+    ip_address: str = "", user_agent: str = "",
+) -> None:
+    conn = get_conn()
+    payload = json.dumps(details or {}, ensure_ascii=False, separators=(",", ":"))
+    with _lock:
+        conn.execute(
+            "INSERT INTO account_audit_logs "
+            "(user_id, action, details, ip_address, user_agent, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, action[:64], payload[:2000], ip_address[:64], user_agent[:300], time.time()),
+        )
+        conn.commit()
 
 
 def delete_session(token: str) -> None:

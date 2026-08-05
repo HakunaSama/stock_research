@@ -50,7 +50,7 @@ export default function ResearchCard({ code, name }: { code: string; name: strin
     return () => {
       alive = false;
     };
-  }, [code, run?.run_id]);
+  }, [code, run]);
 
   // 无产物 → 查询该标的的任务并轮询进行中的任务
   useEffect(() => {
@@ -125,7 +125,7 @@ export default function ResearchCard({ code, name }: { code: string; name: strin
             完整研究过程
           </Button>
         }
-        style={{ borderColor: "rgba(130,71,255,0.35)" }}
+        style={{ borderColor: "color-mix(in srgb, var(--accent) 35%, transparent)" }}
         styles={{ body: { padding: 12 } }}
       >
         <div className="flex items-center gap-3">
@@ -134,7 +134,7 @@ export default function ResearchCard({ code, name }: { code: string; name: strin
             style={{
               color: "var(--accent)",
               background: "var(--bg-inset)",
-              boxShadow: "inset 0 0 0 1px rgba(130,71,255,0.4)",
+              boxShadow: "inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent)",
             }}
           >
             {run.score.toFixed(1)}

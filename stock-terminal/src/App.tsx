@@ -1,12 +1,22 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
-import Home from "@/pages/Home";
-import Login from "@/pages/Login";
-import Billing from "@/pages/Billing";
-import Admin from "@/pages/Admin";
-import Hall from "@/pages/Hall";
 import { useAuth } from "@/store/auth";
+
+// 页面级按需加载：新增业务页面不会继续推高终端首屏包体。
+const Home = lazy(() => import("@/pages/Home"));
+const Login = lazy(() => import("@/pages/Login"));
+const Billing = lazy(() => import("@/pages/Billing"));
+const Admin = lazy(() => import("@/pages/Admin"));
+const Hall = lazy(() => import("@/pages/Hall"));
+
+function PageLoader() {
+  return (
+    <div className="flex min-h-dvh items-center justify-center">
+      <Loader2 size={22} className="animate-spin" style={{ color: "var(--accent)" }} />
+    </div>
+  );
+}
 
 // 路由守卫:未登录 → 跳登录页;bootstrap 未完成 → 显示加载态(避免闪烁)。
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -45,7 +55,8 @@ export default function App() {
 
   return (
     <Router>
-      <Routes>
+      <Suspense fallback={<PageLoader />}>
+        <Routes>
         <Route path="/login" element={<Login />} />
         <Route
           path="/"
@@ -80,7 +91,8 @@ export default function App() {
           }
         />
         <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+        </Routes>
+      </Suspense>
     </Router>
   );
 }

@@ -28,12 +28,17 @@ The very first account created is promoted to admin automatically.
 from __future__ import annotations
 
 import os
+import io
 import re
 import secrets
+import unicodedata
+from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
+from PIL import Image, UnidentifiedImageError
+from starlette.responses import FileResponse
 
 from . import billing, db, emailer
 
@@ -44,7 +49,11 @@ COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "0") in ("1", "true", "True")
 
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,32}$")
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
-_MIN_PASSWORD_LEN = 6
+_MIN_PASSWORD_LEN = 8
+_AVATAR_MAX_BYTES = 5 * 1024 * 1024
+_AVATAR_MAX_EDGE = 512
+_AVATAR_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{12,64}\.webp$")
+_AVATAR_DIR = Path(os.environ.get("STOCK_DATA_DIR", "/tmp/stock-terminal-data")) / "users" / "avatars"
 
 CODE_TTL_SECONDS = 10 * 60
 CODE_RESEND_INTERVAL = 60          # per email+purpose cooldown
@@ -64,6 +73,11 @@ class PublicUser(BaseModel):
     email: str
     email_verified: bool
     is_admin: bool
+    display_name: str
+    bio: str
+    avatar_url: str
+    created_at: float
+    last_login_at: Optional[float] = None
 
 
 class SendCodeBody(BaseModel):
@@ -99,17 +113,46 @@ class BindEmailBody(BaseModel):
     code: str = Field(..., min_length=4, max_length=8)
 
 
+class ProfileBody(BaseModel):
+    username: str = Field(..., min_length=3, max_length=32)
+    display_name: str = Field(..., min_length=1, max_length=40)
+    bio: str = Field(default="", max_length=160)
+    current_password: str = Field(default="", max_length=128)
+
+
+class SessionView(BaseModel):
+    id: str
+    current: bool
+    created_at: float
+    expires_at: float
+    last_seen_at: float
+    user_agent: str
+    ip_address: str
+
+
 # --- helpers ------------------------------------------------------------------
 
 
 def _public(user) -> PublicUser:
+    avatar_key = user["avatar_key"] or ""
     return PublicUser(
         id=user["id"],
         username=user["username"],
         email=user["email"] or "",
         email_verified=bool(user["email_verified"]),
         is_admin=bool(user["is_admin"]),
+        display_name=user["display_name"] or user["username"],
+        bio=user["bio"] or "",
+        avatar_url=f"/api/auth/avatars/{avatar_key}" if avatar_key else "",
+        created_at=user["created_at"],
+        last_login_at=user["last_login_at"],
     )
+
+
+def _request_meta(request: Request) -> tuple[str, str]:
+    forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+    ip_address = forwarded or (request.client.host if request.client else "")
+    return request.headers.get("user-agent", "")[:300], ip_address[:64]
 
 
 def _norm_email(raw: str) -> str:
@@ -142,8 +185,9 @@ def _derive_username(email: str, wanted: str = "") -> str:
     return candidate
 
 
-def _issue_session(response: Response, user_id: int) -> None:
-    token = db.create_session(user_id, SESSION_TTL_SECONDS)
+def _issue_session(response: Response, user_id: int, request: Request) -> None:
+    user_agent, ip_address = _request_meta(request)
+    token = db.create_session(user_id, SESSION_TTL_SECONDS, user_agent, ip_address)
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
@@ -218,7 +262,7 @@ def send_code(body: SendCodeBody):
 
 
 @router.post("/register", response_model=PublicUser)
-def register(body: RegisterBody, response: Response):
+def register(body: RegisterBody, response: Response, request: Request):
     email = _norm_email(body.email)
     _check_password_strength(body.password)
     if db.get_user_by_email(email) is not None:
@@ -232,13 +276,15 @@ def register(body: RegisterBody, response: Response):
                           email=email, email_verified=True)
     db.ensure_account(user["id"])
     billing.grant_signup_bonus(user["id"])
-    _issue_session(response, user["id"])
-    return PublicUser(id=user["id"], username=username, email=email,
-                      email_verified=True, is_admin=is_admin)
+    _issue_session(response, user["id"], request)
+    db.mark_user_login(user["id"])
+    ua, ip = _request_meta(request)
+    db.add_account_audit(user["id"], "account_registered", {"email": email}, ip, ua)
+    return _public(db.get_user_by_id(user["id"]))
 
 
 @router.post("/login", response_model=PublicUser)
-def login(body: LoginBody, response: Response):
+def login(body: LoginBody, response: Response, request: Request):
     account = body.account.strip()
     user = None
     if "@" in account:
@@ -249,12 +295,23 @@ def login(body: LoginBody, response: Response):
         raise HTTPException(status_code=401, detail="账号或密码错误")
     if user["disabled"]:
         raise HTTPException(status_code=403, detail="账号已被禁用，请联系管理员")
-    _issue_session(response, user["id"])
-    return _public(user)
+    _issue_session(response, user["id"], request)
+    db.mark_user_login(user["id"])
+    ua, ip = _request_meta(request)
+    db.add_account_audit(user["id"], "account_login", {}, ip, ua)
+    return _public(db.get_user_by_id(user["id"]))
 
 
 @router.post("/logout")
-def logout(response: Response, stock_session: Optional[str] = Cookie(default=None)):
+def logout(
+    response: Response,
+    request: Request,
+    stock_session: Optional[str] = Cookie(default=None),
+    user=Depends(optional_user),
+):
+    if user is not None:
+        ua, ip = _request_meta(request)
+        db.add_account_audit(user["id"], "account_logout", {}, ip, ua)
     if stock_session:
         db.delete_session(stock_session)
     _clear_session_cookie(response)
@@ -286,6 +343,7 @@ def reset_password(body: ResetBody):
 @router.post("/change-password")
 def change_password(
     body: ChangePasswordBody,
+    request: Request,
     user=Depends(current_user),
     stock_session: Optional[str] = Cookie(default=None),
 ):
@@ -295,11 +353,13 @@ def change_password(
     db.set_user_password(user["id"], body.new_password)
     # Keep the current session alive; kill the rest.
     db.revoke_user_sessions(user["id"], keep_token=stock_session or "")
+    ua, ip = _request_meta(request)
+    db.add_account_audit(user["id"], "password_changed", {}, ip, ua)
     return {"ok": True}
 
 
 @router.post("/bind-email", response_model=PublicUser)
-def bind_email(body: BindEmailBody, user=Depends(current_user)):
+def bind_email(body: BindEmailBody, request: Request, user=Depends(current_user)):
     """Legacy (username-only) accounts attach a verified email here; also
     serves as a re-bind path when the user changes mailbox."""
     email = _norm_email(body.email)
@@ -308,4 +368,148 @@ def bind_email(body: BindEmailBody, user=Depends(current_user)):
     if not db.verify_email_code(email, "bind", body.code.strip()):
         raise HTTPException(status_code=400, detail="验证码错误或已过期")
     db.set_user_email(user["id"], email, verified=True)
+    ua, ip = _request_meta(request)
+    db.add_account_audit(user["id"], "email_changed", {"email": email}, ip, ua)
     return _public(db.get_user_by_id(user["id"]))
+
+
+# --- profile / avatar --------------------------------------------------------
+
+
+def _clean_human_text(raw: str, max_length: int, field: str, required: bool = False) -> str:
+    value = unicodedata.normalize("NFKC", raw).strip()
+    value = " ".join(value.split()) if field == "展示名称" else value
+    if any(unicodedata.category(ch).startswith("C") for ch in value):
+        raise HTTPException(status_code=400, detail=f"{field}包含不可见控制字符")
+    if required and not value:
+        raise HTTPException(status_code=400, detail=f"{field}不能为空")
+    if len(value) > max_length:
+        raise HTTPException(status_code=400, detail=f"{field}最多 {max_length} 个字符")
+    return value
+
+
+@router.patch("/profile", response_model=PublicUser)
+def update_profile(body: ProfileBody, request: Request, user=Depends(current_user)):
+    username = unicodedata.normalize("NFKC", body.username).strip()
+    if not _USERNAME_RE.fullmatch(username):
+        raise HTTPException(status_code=400, detail="用户名只能包含字母、数字、下划线、点和短横线，长度 3-32")
+    display_name = _clean_human_text(body.display_name, 40, "展示名称", required=True)
+    bio = _clean_human_text(body.bio, 160, "个人简介")
+    username_changed = username != user["username"]
+    if username_changed and not db.verify_password(body.current_password, user["password_hash"]):
+        raise HTTPException(status_code=400, detail="修改登录用户名需要验证当前密码")
+    updated = db.update_user_profile(user["id"], username, display_name, bio)
+    if updated is None:
+        raise HTTPException(status_code=409, detail="用户名已被占用")
+    ua, ip = _request_meta(request)
+    db.add_account_audit(
+        user["id"], "profile_updated",
+        {"username_changed": username_changed, "display_name_changed": display_name != (user["display_name"] or user["username"])},
+        ip, ua,
+    )
+    return _public(updated)
+
+
+@router.put("/avatar", response_model=PublicUser)
+async def upload_avatar(request: Request, user=Depends(current_user)):
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].lower()
+    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        raise HTTPException(status_code=415, detail="头像仅支持 JPG、PNG 或 WebP")
+    payload = await request.body()
+    if not payload or len(payload) > _AVATAR_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="头像文件不能为空且不能超过 5MB")
+    try:
+        with Image.open(io.BytesIO(payload)) as source:
+            source.load()
+            if source.width * source.height > 25_000_000:
+                raise HTTPException(status_code=413, detail="头像图片像素尺寸过大")
+            image = source.convert("RGB")
+            image.thumbnail((_AVATAR_MAX_EDGE, _AVATAR_MAX_EDGE), Image.Resampling.LANCZOS)
+    except HTTPException:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError):
+        raise HTTPException(status_code=400, detail="头像文件损坏或不是有效图片")
+
+    _AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+    key = f"{secrets.token_urlsafe(18)}.webp"
+    destination = _AVATAR_DIR / key
+    temporary = _AVATAR_DIR / f".{key}.tmp"
+    try:
+        image.save(temporary, format="WEBP", quality=88, method=6)
+        os.replace(temporary, destination)
+        old_key = user["avatar_key"] or ""
+        updated = db.set_user_avatar(user["id"], key)
+        if old_key and _AVATAR_KEY_RE.fullmatch(old_key):
+            (_AVATAR_DIR / old_key).unlink(missing_ok=True)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        destination.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail="头像保存失败，请稍后重试")
+    ua, ip = _request_meta(request)
+    db.add_account_audit(user["id"], "avatar_updated", {}, ip, ua)
+    return _public(updated)
+
+
+@router.delete("/avatar", response_model=PublicUser)
+def delete_avatar(request: Request, user=Depends(current_user)):
+    old_key = user["avatar_key"] or ""
+    updated = db.set_user_avatar(user["id"], "")
+    if old_key and _AVATAR_KEY_RE.fullmatch(old_key):
+        (_AVATAR_DIR / old_key).unlink(missing_ok=True)
+    ua, ip = _request_meta(request)
+    db.add_account_audit(user["id"], "avatar_deleted", {}, ip, ua)
+    return _public(updated)
+
+
+@router.get("/avatars/{key}")
+def avatar_file(key: str):
+    if not _AVATAR_KEY_RE.fullmatch(key):
+        raise HTTPException(status_code=404, detail="头像不存在")
+    path = _AVATAR_DIR / key
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="头像不存在")
+    return FileResponse(path, media_type="image/webp", headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
+# --- active sessions ---------------------------------------------------------
+
+
+@router.get("/sessions", response_model=list[SessionView])
+def sessions(
+    user=Depends(current_user), stock_session: Optional[str] = Cookie(default=None),
+):
+    current_id = db.session_id_for_token(stock_session or "")
+    return [
+        SessionView(
+            id=row["session_id"], current=row["session_id"] == current_id,
+            created_at=row["created_at"], expires_at=row["expires_at"],
+            last_seen_at=row["last_seen_at"], user_agent=row["user_agent"],
+            ip_address=row["ip_address"],
+        )
+        for row in db.list_user_sessions(user["id"])
+    ]
+
+
+@router.delete("/sessions/{session_id}")
+def revoke_session(
+    session_id: str, request: Request, user=Depends(current_user),
+    stock_session: Optional[str] = Cookie(default=None),
+):
+    if session_id == db.session_id_for_token(stock_session or ""):
+        raise HTTPException(status_code=400, detail="不能在这里移除当前会话，请使用退出登录")
+    if not db.delete_user_session(user["id"], session_id):
+        raise HTTPException(status_code=404, detail="会话不存在或已失效")
+    ua, ip = _request_meta(request)
+    db.add_account_audit(user["id"], "session_revoked", {"session_id": session_id}, ip, ua)
+    return {"ok": True}
+
+
+@router.post("/sessions/revoke-others")
+def revoke_other_sessions(
+    request: Request, user=Depends(current_user),
+    stock_session: Optional[str] = Cookie(default=None),
+):
+    db.revoke_user_sessions(user["id"], keep_token=stock_session or "")
+    ua, ip = _request_meta(request)
+    db.add_account_audit(user["id"], "other_sessions_revoked", {}, ip, ua)
+    return {"ok": True}

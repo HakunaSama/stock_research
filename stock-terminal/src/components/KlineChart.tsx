@@ -1,21 +1,13 @@
 import { useMemo, useRef, useState } from "react";
 import type { KlineData } from "@/types/analysis";
+import { useSkin } from "@/theme/SkinContext";
+import { skins } from "@/theme/skins";
 
 // 手绘 SVG 蜡烛图 —— 零第三方图表依赖。A 股惯例:涨红跌绿。
 // 叠加 MA5/MA20/MA60 均线与成交量柱,右侧价格轴,支撑/压力标线。
 // 交互:鼠标悬停显示十字线 + 单根 K 线明细浮层(开/高/低/收/涨跌/量)。
 //
-// 注意:SVG presentation attribute 里 CSS 变量不生效,故用与 theme.css
-// 对齐的固定 hex 常量。
-
-const UP = "#e5484d"; // --up
-const DOWN = "#00a05a"; // --down
-const GRID = "#eae8f4"; // --border-subtle
-const AXIS = "#8b89a6"; // --text-muted
-const CROSS = "#45446b"; // --text-secondary
-const MA5 = "#8247ff";
-const MA20 = "#3e63dd";
-const MA60 = "#d97706";
+// SVG 颜色也从皮肤注册表取值，避免图表维护一套独立硬编码主题。
 
 interface Props {
   data: KlineData;
@@ -33,6 +25,16 @@ function movingAvg(closes: number[], window: number): (number | null)[] {
 }
 
 export default function KlineChart({ data, maxBars = 120, height = 360 }: Props) {
+  const { skinId } = useSkin();
+  const skin = skins[skinId].tokens;
+  const UP = skin["--up"];
+  const DOWN = skin["--down"];
+  const GRID = skin["--chart-grid"];
+  const AXIS = skin["--chart-axis"];
+  const CROSS = skin["--chart-cross"];
+  const MA5 = skin["--chart-ma5"];
+  const MA20 = skin["--chart-ma20"];
+  const MA60 = skin["--chart-ma60"];
   const bars = useMemo(() => data.bars.slice(-maxBars), [data.bars, maxBars]);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
@@ -177,8 +179,8 @@ export default function KlineChart({ data, maxBars = 120, height = 360 }: Props)
             <g pointerEvents="none">
               <line x1={geom.cx(hover)} y1={geom.padT} x2={geom.cx(hover)} y2={geom.volTop + geom.volH} stroke={CROSS} strokeWidth={0.5} strokeDasharray="3 3" opacity={0.7} />
               <line x1={geom.padL} y1={geom.yPrice(hb.c)} x2={geom.W - geom.padR} y2={geom.yPrice(hb.c)} stroke={CROSS} strokeWidth={0.5} strokeDasharray="3 3" opacity={0.7} />
-              <rect x={geom.W - geom.padR + 1} y={geom.yPrice(hb.c) - 6} width={44} height={12} rx={2} fill="#11023b" stroke={CROSS} strokeWidth={0.4} />
-              <text x={geom.W - geom.padR + 23} y={geom.yPrice(hb.c) + 3} fontSize={8} fill="#ffffff" textAnchor="middle" fontFamily="ui-monospace, monospace">
+              <rect x={geom.W - geom.padR + 1} y={geom.yPrice(hb.c) - 6} width={44} height={12} rx={2} fill={skin["--chart-label-bg"]} stroke={CROSS} strokeWidth={0.4} />
+              <text x={geom.W - geom.padR + 23} y={geom.yPrice(hb.c) + 3} fontSize={8} fill={skin["--chart-label-text"]} textAnchor="middle" fontFamily="ui-monospace, monospace">
                 {hb.c.toFixed(2)}
               </text>
             </g>
